@@ -595,7 +595,7 @@ return view.extend({
 				 * channel onto the left edge. Draw lazily instead, and retry until
 				 * the panel really has a width.
 				 */
-				(() => {
+				;(() => {
 					const div = graph_data.graph, chans = bands[band].channels, bnd = band;
 					const key = tab.getAttribute('data-tab');
 					let drawn = false, tries = 0, timer = null;
