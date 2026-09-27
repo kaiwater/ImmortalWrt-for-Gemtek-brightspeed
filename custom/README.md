@@ -39,3 +39,5 @@
 - 这是文件覆盖，不依赖 `patches/feeds/` 补丁，所以上游改动不会导致编译失败；代价是上游对同一文件的更新不会自动跟进来。
 - 需要跟进上游时：`git -C feeds/luci log --oneline -- modules/luci-mod-status/htdocs/luci-static/resources/view/status/channel_analysis.js`，把上游改动手工合进本文件。
 - 同样的修复已按 naoki66 的 `patches/feeds/` 约定提交 PR；若上游合并，可以直接删除这个覆盖文件。
+- 覆盖文件当前为 20215 字节，md5 `e040c901f50e451e7a4c77275b997f7b`。
+- 改完这个文件后**必须**做一次运行时验证：`tabs.firstElementChild.appendChild(tab)` 这一行原文没有行尾分号，如果在它后面追加以 `(` 开头的语句，会被 JS 解析成 `appendChild(tab)( ... )`，浏览器直接抛 `TypeError: ... is not a function`；`node --check` 只会做语法检查，查不出这个问题。可在 Node 里用桩对象真正执行一遍 `render()`，或至少刷一次页面确认无红色报错。
