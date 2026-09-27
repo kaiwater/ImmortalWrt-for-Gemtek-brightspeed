@@ -8,9 +8,6 @@
 
 # ---------- 编译进固件的插件 ----------
 CONFIG_PACKAGE_luci-app-openclash=y
-CONFIG_PACKAGE_luci-app-dae=y
-CONFIG_PACKAGE_dae=y
-CONFIG_PACKAGE_luci-i18n-dae-zh-cn=y
 CONFIG_PACKAGE_luci-app-argon-config=y
 CONFIG_PACKAGE_luci-i18n-argon-config-zh-cn=y
 CONFIG_PACKAGE_luci-theme-argon=y
@@ -22,6 +19,23 @@ CONFIG_PACKAGE_luci-app-rtp2httpd=y
 CONFIG_PACKAGE_luci-i18n-rtp2httpd-zh-cn=y
 
 # ---------- 不需要的插件（保持关闭） ----------
+
+# dae / daed（不需要：它会连带编译 llvm-bpf BPF 工具链与 kmod-sched-bpf，又慢又容易失败）
+# CONFIG_PACKAGE_luci-app-dae is not set
+# CONFIG_PACKAGE_luci-i18n-dae-zh-cn is not set
+# CONFIG_PACKAGE_dae is not set
+# CONFIG_PACKAGE_dae-geoip is not set
+# CONFIG_PACKAGE_dae-geosite is not set
+# CONFIG_PACKAGE_daed is not set
+# CONFIG_PACKAGE_daed-geoip is not set
+# CONFIG_PACKAGE_daed-geosite is not set
+# 内核/工具链侧：以上 dae 项去掉后，CONFIG_NEED_BPF_TOOLCHAIN / CONFIG_USE_LLVM_BUILD 会自动消失，
+# 也就是不再编译 tools/llvm-bpf（Clang BPF 工具链）；kmod-sched-bpf 一并显式关闭。
+# CONFIG_PACKAGE_kmod-sched-bpf is not set
+# CONFIG_PACKAGE_tc-bpf is not set
+# CONFIG_PACKAGE_bpfcountd is not set
+# CONFIG_PACKAGE_bpftool-full is not set
+# CONFIG_PACKAGE_bpftool-minimal is not set
 # udpxy
 # CONFIG_PACKAGE_udpxy is not set
 # CONFIG_PACKAGE_luci-app-udpxy is not set
