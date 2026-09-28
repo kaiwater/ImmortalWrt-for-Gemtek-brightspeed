@@ -189,24 +189,15 @@ define Device/nokia_xg-040g-md-ubi
 endef
 TARGET_DEVICES += nokia_xg-040g-md-ubi
 
-define Device/gemtek_xr1710g-ubi
+define Device/gemtek_xr1710g-common
   DEVICE_VENDOR := Gemtek
   DEVICE_MODEL := XR1710G
-  DEVICE_VARIANT := UBI
-  DEVICE_ALT0_VENDOR := Brightspeed
-  DEVICE_ALT0_MODEL := XR1710G
-  DEVICE_ALT0_VARIANT := UBI
-  SUPPORTED_DEVICES := gemtek,xr1710g-ubi
-  DEVICE_DTS := an7581-xr1710g-ubi
   DEVICE_PACKAGES := airoha-en7581-mt7996-npu-firmware airoha-an7581-mt7996-board \
-		    fitblk uboot-envtools kmod-airoha-i2c \
-		    kmod-hwmon-nct7802 kmod-mt7996-firmware wpad-mbedtls \
+		    kmod-nf-conntrack-bridge kmod-nft-bridge \
+		    fitblk uboot-envtools \
+		    kmod-hwmon-nct7802 kmod-mt7996-firmware wpad-mesh-mbedtls \
 		    rtl826x-firmware px5g-mbedtls \
-		    -kmod-airoha-xpon-en757x -kmod-airoha-pon-plugins \
-		    -kmod-airoha-pon-dataplane -kmod-airoha-xpon-igmp \
-		    -kmod-airoha-gpon-igmp -kmod-airoha-tod \
-		    -kmod-airoha-en7581-pcm-spi \
-		    -airoha-pon-firmware -airoha-pon-manager
+		    -kmod-airoha-tod -kmod-airoha-en7581-pcm-spi
   UBINIZE_OPTS := -E 5
   BLOCKSIZE := 128k
   PAGESIZE := 2048
@@ -220,6 +211,29 @@ define Device/gemtek_xr1710g-ubi
   IMAGE/sysupgrade.itb := append-kernel | fit gzip $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb external-static-with-rootfs | append-metadata
   SOC := an7581
 endef
+
+define Device/gemtek_xr1710g
+  $(call Device/gemtek_xr1710g-common)
+  DEVICE_ALT0_VENDOR := Brightspeed
+  DEVICE_ALT0_MODEL := XR1710G
+  SUPPORTED_DEVICES := gemtek,xr1710g
+  DEVICE_DTS := an7581-xr1710g
+endef
+TARGET_DEVICES += gemtek_xr1710g
+
+define Device/gemtek_xr1710g-ubi
+  $(call Device/gemtek_xr1710g-common)
+  DEVICE_MODEL := XR1710G (OpenWrt U-Boot UBI layout)
+  DEVICE_ALT0_VENDOR := Brightspeed
+  DEVICE_ALT0_MODEL := XR1710G (OpenWrt U-Boot UBI layout)
+  SUPPORTED_DEVICES := gemtek,xr1710g-ubi
+  DEVICE_DTS := an7581-gemtek-xr1710g-ubi
+  DEVICE_COMPAT_VERSION := 2.0
+  DEVICE_COMPAT_MESSAGE := Firmware requires the XR1710G OpenWrt U-Boot UBI layout \
+       with bl2 at 0x00000000 and the UBI partition extending from \
+       0x00020000 to the end of NAND. Restore the complete 2 MiB stock DSD \
+       main-data image to the static factory volume before booting Linux.
+endef
 TARGET_DEVICES += gemtek_xr1710g-ubi
 
 define Device/gemtek_xg2010g-ubi
@@ -228,17 +242,15 @@ define Device/gemtek_xg2010g-ubi
   DEVICE_VARIANT := UBI
   DEVICE_DTS := an7581-gemtek-xg2010g-ubi
   DEVICE_COMPAT_VERSION := 2.0
-  DEVICE_COMPAT_MESSAGE := Firmware must use the XG2010G UBI layout with \
-       the fit volume inside the ubi partition at 0x00600000. Upgrade only \
-       the ubi partition and keep bootloader, uenv, dsd and reserved_bmt intact.
+  DEVICE_COMPAT_MESSAGE := Firmware requires the XG2010G OpenWrt U-Boot UBI layout \
+       with bl2 at 0x00000000 and ubi starting at 0x00020000, containing \
+       fip, ubootenv, ubootenv2, factory and fit. Do not force an upgrade from \
+       the legacy 0x00600000 layout. Preserve bl2 and the boot/calibration volumes.
   DEVICE_PACKAGES := fitblk kmod-leds-gpio kmod-gpio-button-hotplug \
-	kmod-phy-airoha-en8811h \
-	kmod-airoha-xpon-en757x kmod-airoha-pon-plugins \
-	kmod-airoha-pon-dataplane kmod-airoha-xpon-igmp \
-	kmod-airoha-gpon-igmp \
-	kmod-airoha-tod \
-	kmod-airoha-en7581-pcm-spi \
-	airoha-pon-firmware airoha-pon-manager \
+	kmod-phy-airoha-en8811h kmod-phy-realtek rtl826x-firmware \
+	kmod-nf-conntrack-bridge kmod-nft-bridge \
+	kmod-airoha-en7572 kmod-airoha-xpon airoha-ponctl airoha-pond \
+	kmod-airoha-tod kmod-airoha-en7581-pcm-spi \
 	-airoha-an7581-mt7996-board -airoha-en7581-mt7996-npu-firmware \
 	-kmod-mac80211 -kmod-mt7996-firmware -kmod-mt7996e \
 	-wpad-mbedtls -wpad-mesh-mbedtls -wireless-regdb
@@ -247,13 +259,13 @@ define Device/gemtek_xg2010g-ubi
   UBINIZE_OPTS := -E 5
   KERNEL_IN_UBI := 1
   KERNEL := kernel-bin | gzip
-  KERNEL_INITRAMFS := kernel-bin | lzma | \
-	fit lzma $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb with-initrd | pad-to 128k
-  KERNEL_INITRAMFS_SUFFIX := -recovery.itb
+  KERNEL_INITRAMFS :=
   IMAGES := sysupgrade.itb
+  # Keep the complete FIT within the existing 346-LEB UBI volume.
+  IMAGE_SIZE := 42904k
   IMAGE/sysupgrade.itb := append-kernel | \
 	fit gzip $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb external-static-with-rootfs | \
-	append-metadata
+	append-metadata | check-size
   SUPPORTED_DEVICES := gemtek,xg2010g-ubi gemtek,xg2010g
   SOC := an7581
 endef
