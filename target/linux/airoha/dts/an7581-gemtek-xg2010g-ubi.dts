@@ -25,7 +25,7 @@
 
 	chosen {
 		/* Create fastmap on first attach for boot firmware and Linux reuse. */
-		bootargs = "console=ttyS0,115200 earlycon";
+		bootargs = "console=ttyS0,115200 earlycon cpufreq.default_governor=powersave";
 		rootdisk = <&ubi_fit>;
 		stdout-path = "serial0:115200n8";
 	};
@@ -112,6 +112,53 @@
 			function-enumerator = <4>;
 			gpios = <&en7581_pinctrl 42 GPIO_ACTIVE_LOW>;
 		};
+	};
+};
+
+&cpufreq {
+	reg = <0x0 0x1fa20000 0x0 0x2c0
+	       0x0 0x1efbe000 0x0 0x800>;
+	reg-names = "chip-scu", "mcucfg";
+	airoha,force-direct-pll;
+};
+
+&cpu_opp_table {
+	opp-1250000000 {
+		opp-hz = /bits/ 64 <1250000000>;
+		required-opps = <&smcc_opp15>;
+	};
+
+	opp-1300000000 {
+		opp-hz = /bits/ 64 <1300000000>;
+		required-opps = <&smcc_opp16>;
+	};
+
+	opp-1350000000 {
+		opp-hz = /bits/ 64 <1350000000>;
+		required-opps = <&smcc_opp17>;
+	};
+
+	opp-1400000000 {
+		opp-hz = /bits/ 64 <1400000000>;
+		required-opps = <&smcc_opp18>;
+	};
+};
+
+&cpu_smcc_opp_table {
+	smcc_opp15: opp15 {
+		opp-level = <15>;
+	};
+
+	smcc_opp16: opp16 {
+		opp-level = <16>;
+	};
+
+	smcc_opp17: opp17 {
+		opp-level = <17>;
+	};
+
+	smcc_opp18: opp18 {
+		opp-level = <18>;
 	};
 };
 
@@ -407,8 +454,8 @@
 
 /*
  * Local XG2010G voice stack. Keep it after the PON-aligned blocks above.
- * PCM DMA and the ISI controller expose two independently addressed Si32192
- * devices. AFE remains available for the SoC audio DAI.
+ * The two RJ11 sockets are wired in parallel to one Si32192. Expose one
+ * logical FXS line; AFE remains available for the SoC audio DAI.
  */
 / {
 	tod: tod@1fbe2300 {
@@ -423,12 +470,12 @@
 		reg = <0x0 0x1fbd0000 0x0 0x1000>;
 		reg-names = "pcm";
 		interrupts = <GIC_SPI 27 IRQ_TYPE_LEVEL_HIGH>;
-		airoha,pcm-interface-control = <0xf5071306>;
-		airoha,tx-slot-config = <0x10301020 0x10501040
-					 0x10701060 0x10901080>;
-		airoha,rx-slot-config = <0x10301020 0x10501040
-					 0x10701060 0x10901080>;
-		airoha,dma-channel-mask = <0x05>;
+		airoha,pcm-interface-control = <0xf5051306>;
+		airoha,tx-slot-config = <0x10101000 0x10301020
+					 0x10501040 0x10701060>;
+		airoha,rx-slot-config = <0x10101000 0x10301020
+					 0x10501040 0x10701060>;
+		airoha,dma-channel-mask = <0x01>;
 		status = "okay";
 	};
 
@@ -452,16 +499,7 @@
 			spi-cpol;
 			airoha,pcm = <&pcm0>;
 			airoha,pcm-channel = <0>;
-		};
-
-		proslic@1 {
-			compatible = "silabs,si32192";
-			reg = <1>;
-			spi-max-frequency = <10000000>;
-			spi-cpha;
-			spi-cpol;
-			airoha,pcm = <&pcm0>;
-			airoha,pcm-channel = <2>;
+			silabs,pcm-slot-skew = <0>;
 		};
 	};
 };

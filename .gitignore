@@ -38,3 +38,9 @@ git-src
 .vscode*
 .workbuddy
 .codex-run*
+
+# Local voice build and test artifacts
+/*.apk
+/artifacts/
+/test-tone.wav
+/tests/__pycache__/

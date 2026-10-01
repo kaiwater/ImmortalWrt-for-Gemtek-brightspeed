@@ -7,6 +7,7 @@ import unittest
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 COMMON = REPO / "package/luci-app-airoha/root/usr/libexec/rpcd/airoha-common.sh"
+NPU_BACKEND = COMMON.parent / "luci.airoha_npu"
 BASE = REPO / "target/linux/airoha/an7581/base-files"
 
 
@@ -101,6 +102,66 @@ class BoardTests(unittest.TestCase):
         acl = json.loads((COMMON.parents[3] / "usr/share/rpcd/acl.d/luci-app-airoha.json").read_text())
         self.assertIn("getTopology", acl["luci-app-airoha"]["read"]["ubus"]["luci.airoha_npu"])
 
+    def test_cpufreq_range_is_kernel_backed_and_capped_at_1400mhz(self):
+        policy = "sys/devices/system/cpu/cpufreq/policy3"
+        self.put(policy + "/scaling_governor", "powersave\n")
+        self.put(
+            policy + "/scaling_available_frequencies",
+            "1200000 1250000 1300000 1350000 1400000 1450000 1600000\n",
+        )
+        backend = NPU_BACKEND.read_text()
+        backend = backend[backend.index("_find_cpufreq_policy()"):
+                          backend.index("get_status()")]
+        output = self.shell(
+            backend,
+            """
+dir=$(_find_cpufreq_policy)
+printf 'dir=%s\n' "${dir##*/}"
+_cpu_frequencies "$dir" | tr '\n' ' '
+printf '\n1400='; _cpu_freq_allowed "$dir" 1400000; echo $?
+printf '1450='; _cpu_freq_allowed "$dir" 1450000; echo $?
+""",
+        )
+        self.assertEqual(
+            output,
+            "dir=policy3\n1200000 1250000 1300000 1350000 1400000 \n1400=0\n1450=1\n",
+        )
+
+    def test_gemtek_14ghz_opps_match_direct_pll_states(self):
+        dts_names = (
+            "an7581-gemtek-xg2010g-ubi.dts",
+            "an7581-xr1710g.dts",
+            "an7581-gemtek-xr1710g-ubi.dts",
+        )
+        for name in dts_names:
+            dts = (REPO / "target/linux/airoha/dts" / name).read_text()
+            self.assertIn("airoha,force-direct-pll;", dts, name)
+            self.assertIn("cpufreq.default_governor=powersave", dts, name)
+            for state in range(15, 19):
+                mhz = 500 + state * 50
+                self.assertIn(f"opp-{mhz}000000", dts, name)
+                self.assertIn(f"required-opps = <&smcc_opp{state}>;", dts, name)
+                self.assertIn(f"opp-level = <{state}>;", dts, name)
+            self.assertNotIn("opp-1450000000", dts, name)
+
+        patch = (
+            REPO
+            / "target/linux/airoha/patches-6.18/0402-pmdomain-airoha-allow-board-opt-in-direct-pll.patch"
+        ).read_text()
+        self.assertIn('"airoha,force-direct-pll"', patch)
+        self.assertIn("if (state > 22)", patch)
+
+    def test_gemtek_cpufreq_defaults_use_1400mhz_maximum(self):
+        defaults = (BASE / "etc/uci-defaults/11-xr1710g-cpufreq-defaults").read_text()
+        for board in (
+            "gemtek,xg2010g",
+            "gemtek,xg2010g-ubi",
+            "gemtek,xr1710g",
+            "gemtek,xr1710g-ubi",
+        ):
+            self.assertIn(board, defaults)
+        self.assertIn("maxfreq0='1400000'", defaults)
+
     def test_board_compat_defaults(self):
         code = (BASE / "etc/board.d/05_compat-version").read_text()
         code = "\n".join(line for line in code.splitlines() if not line.startswith(". "))
@@ -143,6 +204,11 @@ ucidef_set_compat_version() {{ echo "$1"; }}
         self.put("sys/firmware/devicetree/base/chosen/rootdisk", b"\0\0\0\x18")
         self.assertEqual(self.check_layout(), "1")
 
+    def test_layout_check_does_not_require_optional_text_tools(self):
+        code = (BASE / "lib/upgrade/gemtek-ubi.sh").read_text()
+        self.assertNotIn("tr -d", code)
+        self.assertNotIn("cmp -s", code)
+
     def test_compat_migration_checks_layout_before_write(self):
         self.ubi_layout()
         mocks = """
@@ -162,17 +228,25 @@ uci() {
         self.put("sys/class/mtd/mtd1/offset", "6291456\n")
         self.assertEqual(self.shell(code, command).strip(), "rc=1")
 
-    def test_production_builds_disable_devmem_and_pse_rpc(self):
+    def test_xg2010g_debug_build_enables_devmem_without_changing_xr1710g(self):
         configs = [(REPO / name).read_text() for name in ("1710.config", "2010.config")]
         busybox_defaults = (REPO / "package/utils/busybox/Config-defaults.in").read_text()
+        busybox_makefile = (REPO / "package/utils/busybox/Makefile").read_text()
         backend = (COMMON.parent / "luci.airoha_npu").read_text()
         acl = (COMMON.parents[3] / "usr/share/rpcd/acl.d/luci-app-airoha.json").read_text()
         frontend = (REPO / "package/luci-app-airoha/htdocs/luci-static/resources/view/airoha_npu/status.js").read_text()
-        for config in configs:
-            self.assertIn("# CONFIG_KERNEL_DEVMEM is not set", config)
-            self.assertNotIn("CONFIG_KERNEL_DEVMEM=y", config)
-            self.assertNotIn("CONFIG_BUSYBOX_DEFAULT_DEVMEM=y", config)
+        for name, config in zip(("1710.config", "2010.config"), configs):
+            if name == "2010.config":
+                self.assertIn("CONFIG_KERNEL_DEVMEM=y", config)
+                self.assertIn("CONFIG_BUSYBOX_DEFAULT_DEVMEM=y", config)
+            else:
+                self.assertIn("# CONFIG_KERNEL_DEVMEM is not set", config)
+                self.assertNotIn("CONFIG_KERNEL_DEVMEM=y", config)
+                self.assertNotIn("CONFIG_BUSYBOX_DEFAULT_DEVMEM=y", config)
         self.assertNotIn("default y if TARGET_airoha_an7581", busybox_defaults)
+        self.assertIn("CONFIG_TARGET_airoha_an7581_DEVICE_gemtek_xg2010g-ubi", busybox_makefile)
+        self.assertIn('echo "CONFIG_DEVMEM=y"', busybox_makefile)
+        self.assertIn("ln -sf /bin/busybox $(1)/usr/bin/devmem", busybox_makefile)
         self.assertNotIn("getFrameEngine", backend)
         self.assertNotIn("getFrameEngine", acl)
         self.assertNotIn("/dev/mem", acl)
