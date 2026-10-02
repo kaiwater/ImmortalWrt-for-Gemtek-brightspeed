@@ -1,0 +1,5 @@
+# XG2010G（2010.config）专用 feed
+# kenzok8/openwrt-daede：dae 内核 + daed（带 Web 面板）+ luci-app-daede 统一界面
+# 放在 feeds.conf 最前面，保证与 immortalwrt/packages 同名的 dae / daed 优先用这个 feed 的版本
+# （构建脚本里还会把其它 feed 的 dae / daed 删掉，避免同名包冲突）
+src-git daede https://github.com/kenzok8/openwrt-daede.git;main

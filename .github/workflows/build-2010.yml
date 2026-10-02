@@ -74,11 +74,36 @@ jobs:
 
       - name: Install feeds
         run: |
-          # 只用上游 feed（2010 用 daed，不需要 OpenClash feed）
-          cp feeds.conf.default feeds.conf
+          # 2010 专用 feed（kenzok8/openwrt-daede）放在最前面，保证同名包优先取它的版本
+          if [ -f custom/feeds.conf.2010 ]; then
+            cat custom/feeds.conf.2010 > feeds.conf
+          else
+            : > feeds.conf
+          fi
+          cat feeds.conf.default >> feeds.conf
+          echo "== feeds.conf =="
+          cat feeds.conf
           ./scripts/feeds update -a
           ./scripts/feeds install -a
           bash scripts/fix-stale-golang-host.sh
+
+      - name: Drop duplicate dae/daed from other feeds
+        run: |
+          # immortalwrt/packages 里也有同名 dae/daed，会与 kenzok8 的版本冲突。
+          # 这里把其它 feed 的副本删掉，只保留 daede feed 的版本。
+          shopt -s nullglob
+          removed=0
+          for d in package/feeds/*/daed package/feeds/*/dae; do
+            case "$d" in
+              package/feeds/daede/*) echo "保留: $d"; continue ;;
+            esac
+            echo "移除重复包: $d"
+            rm -rf "$d"
+            removed=$((removed + 1))
+          done
+          echo "移除数量: $removed"
+          echo "== daede feed 安装情况 =="
+          ls -l package/feeds/daede/ 2>/dev/null || echo "（没有找到 package/feeds/daede）"
 
       - name: Apply feed patches
         run: |
@@ -104,7 +129,9 @@ jobs:
           echo "== 目标机型 =="
           grep -E 'CONFIG_TARGET_(airoha_an7581_DEVICE|DEVICE_airoha_an7581_DEVICE).*=y' .config || true
           echo "== 本次关注的插件在 .config 里的状态 =="
-          grep -E 'CONFIG_PACKAGE_(msd_lite|luci-app-msd_lite|ddns-go|luci-app-ddns-go|luci-app-daed|daed|luci-theme-glass|asterisk|airoha-voice-ctl|homeproxy|sing-box|pbr|udpxy|rtp2httpd|ddns-scripts)(=| is not set)' .config | sort || true
+          grep -E 'CONFIG_PACKAGE_(msd_lite|luci-app-msd_lite|ddns-go|luci-app-ddns-go|luci-app-daede|luci-app-daede_daed|luci-app-daede_dae|luci-app-daed|daed|luci-theme-glass|asterisk|airoha-voice-ctl|homeproxy|sing-box|pbr|udpxy|rtp2httpd|ddns-scripts)(=| is not set)' .config | sort || true
+          echo "== dae/daed 相关内核开关 =="
+          grep -E 'CONFIG_KERNEL_(DEBUG_INFO_BTF|DEBUG_INFO_REDUCED|BPF_EVENTS|XDP_SOCKETS)' .config || true
 
       - name: Prepare custom files overlay
         run: |
@@ -143,11 +170,11 @@ jobs:
           echo "manifest: $manifest"
           echo "== 镜像内软件包总数：$(grep -c . "$manifest") =="
           echo "== 应当存在的包 =="
-          for p in msd_lite luci-app-msd_lite ddns-go luci-app-ddns-go luci-app-daed luci-theme-glass asterisk asterisk-chan-en75xx airoha-voice-ctl; do
+          for p in msd_lite luci-app-msd_lite ddns-go luci-app-ddns-go luci-app-daede daed v2ray-geoip luci-theme-glass asterisk asterisk-chan-en75xx airoha-voice-ctl; do
             if grep -q "^$p " "$manifest"; then echo "  [OK]  $p"; else echo "  [!!]  $p 不在镜像里"; fi
           done
           echo "== 应当缺席的包（出现说明没关掉）=="
-          if grep -E '^(udpxy|luci-app-udpxy|rtp2httpd|luci-app-rtp2httpd|homeproxy|luci-app-homeproxy|sing-box|pbr|luci-app-pbr|ddns-scripts|luci-app-ddns|luci-theme-argon|luci-app-argon-config|luci-app-passwall.*) ' "$manifest"; then
+          if grep -E '^(udpxy|luci-app-udpxy|rtp2httpd|luci-app-rtp2httpd|homeproxy|luci-app-homeproxy|sing-box|pbr|luci-app-pbr|ddns-scripts|luci-app-ddns|luci-theme-argon|luci-app-argon-config|luci-app-daed|luci-i18n-daed-zh-cn|dae|daed-geoip|daed-geosite|luci-app-passwall.*) ' "$manifest"; then
             echo "::warning::上面这些包仍在镜像里，检查 config.fragment.2010"
           else
             echo "  （无，符合预期）"
