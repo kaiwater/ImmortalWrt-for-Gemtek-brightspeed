@@ -41,3 +41,20 @@
 - 同样的修复已按 naoki66 的 `patches/feeds/` 约定提交 PR；若上游合并，可以直接删除这个覆盖文件。
 - 覆盖文件当前为 20215 字节，md5 `e040c901f50e451e7a4c77275b997f7b`。
 - 改完这个文件后**必须**做一次运行时验证：`tabs.firstElementChild.appendChild(tab)` 这一行原文没有行尾分号，如果在它后面追加以 `(` 开头的语句，会被 JS 解析成 `appendChild(tab)( ... )`，浏览器直接抛 `TypeError: ... is not a function`；`node --check` 只会做语法检查，查不出这个问题。可在 Node 里用桩对象真正执行一遍 `render()`，或至少刷一次页面确认无红色报错。
+## XG2010G（2010.config）专用定制（2026-10-02 新增）
+
+| 文件 | 作用 |
+| --- | --- |
+| `custom/config.fragment.2010` | XG2010G 的插件开关（只影响 2010 构建） |
+| `custom/files-2010/etc/uci-defaults/99-theme-glass.sh` | 首次开机把默认界面设为 glass |
+| `.github/workflows/build-2010.yml` | XG2010G 专用构建 + 发布（tag 前缀 `xg2010g-`，与 XR1710G 分开） |
+
+插件取舍：
+
+- **IPTV**：只用 `msd_lite`；关闭 `udpxy`、`rtp2httpd`（含各自 LuCI 与中文包）
+- **DDNS**：只用 `ddns-go`；关闭 `ddns-scripts` 全套与 `luci-app-ddns`
+- **代理**：安装 `daed`（`luci-app-daed` + `daed`/`daed-geoip`/`daed-geosite` + 中文包）；删除 `homeproxy`/`sing-box`/`pbr` 与 8 个 PassWall 残留开关
+- **主题**：换 `luci-theme-glass`；关闭 `luci-theme-argon` 与 `luci-app-argon-config`
+- **语音**：保留运营商语音通话所需（`asterisk` + `asterisk-pjsip` + `asterisk-chan-en75xx` + ulaw/alaw/g722 + rtp + sln/wav + playtones + `airoha-voice-ctl`）；关闭本机电话主机功能（`app-record`/`app-stack`/`bridge-softmix`/`res-musiconhold`/`pbx-spool`/`sounds` 及 gsm/a-mu/pcm 格式）
+
+> 注意：`daed` 会连带编译 BPF 工具链（llvm-bpf），构建时间明显变长；若构建内存不足，把 `build-2010.yml` 里的 `make -j$(nproc) world` 改成 `make -j2 world`。

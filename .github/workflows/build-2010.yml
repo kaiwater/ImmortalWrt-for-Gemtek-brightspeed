@@ -1,0 +1,216 @@
+name: Build XG2010G Firmware
+# 与 build-firmware.yml（XR1710G）相互独立：
+#   - 种子配置用 2010.config，定制开关用 custom/config.fragment.2010
+#   - 产物名 / Release tag / Release 标题都带 XG2010G，避免与 1710 撞车
+#   - 不使用 OpenClash feed 与 mihomo 内核（本机代理用 daed）
+# 定制文件：custom/config.fragment.2010、custom/files-2010/
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_type:
+        description: 'Release Type'
+        required: true
+        default: 'release'
+        type: choice
+        options:
+          - none
+          - release
+          - prerelease
+      release_notes:
+        description: 'Release Notes'
+        required: false
+  push:
+    branches:
+      - master
+    paths:
+      - '2010.config'
+      - 'custom/config.fragment.2010'
+      - 'custom/files-2010/**'
+      - 'custom/files/**'
+      - '.github/workflows/build-2010.yml'
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+concurrency:
+  group: xg2010g-build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Generate build version
+        id: version
+        run: |
+          git remote add upstream https://github.com/immortalwrt/immortalwrt.git 2>/dev/null || true
+          git remote set-url upstream https://github.com/immortalwrt/immortalwrt.git
+          git fetch --no-tags upstream master
+
+          build_date=$(TZ=Asia/Shanghai date +'%Y%m%d')
+          repo_commit=$(git rev-parse --short=8 HEAD)
+          upstream_base=$(git merge-base HEAD upstream/master)
+          upstream_commit=$(git rev-parse --short=8 "$upstream_base")
+          build_id="${build_date}-${repo_commit}-${upstream_commit}"
+
+          echo "date=$build_date" >> $GITHUB_OUTPUT
+          echo "build_id=$build_id" >> $GITHUB_OUTPUT
+          echo "repo_commit=$repo_commit" >> $GITHUB_OUTPUT
+          echo "upstream_commit=$upstream_commit" >> $GITHUB_OUTPUT
+          echo "Build version: ImmortalWrt for XG2010G ${build_id}"
+
+      - name: Setup build environment
+        run: |
+          sudo apt update
+          sudo apt install -y build-essential clang gcc g++ binutils bzip2 gawk gettext git libncurses-dev libssl-dev python3 python3-setuptools rsync unzip wget xsltproc zlib1g-dev file which perl sed make
+
+      - name: Install feeds
+        run: |
+          # 只用上游 feed（2010 用 daed，不需要 OpenClash feed）
+          cp feeds.conf.default feeds.conf
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+          bash scripts/fix-stale-golang-host.sh
+
+      - name: Apply feed patches
+        run: |
+          if [ -f scripts/apply-feed-patches.sh ]; then
+            FEED_PATCHES_STRICT=1 bash scripts/apply-feed-patches.sh
+          fi
+
+      - name: Configure (2010.config + custom fragment)
+        run: |
+          cp 2010.config .config
+          if [ -f custom/config.fragment.2010 ]; then
+            cat custom/config.fragment.2010 >> .config
+          fi
+          VERSION_DIST='immortalwrt' \
+          VERSION_NUMBER='${{ steps.version.outputs.build_id }}' \
+          BUILD_DATE='${{ steps.version.outputs.date }}' \
+          BUILD_ID='${{ steps.version.outputs.build_id }}' \
+          REPO_COMMIT='${{ steps.version.outputs.repo_commit }}' \
+          UPSTREAM_COMMIT='${{ steps.version.outputs.upstream_commit }}' \
+          VERSION_CODE='${{ steps.version.outputs.build_id }}' \
+          bash scripts/set-build-version.sh .config
+          make defconfig
+          echo "== 目标机型 =="
+          grep -E 'CONFIG_TARGET_(airoha_an7581_DEVICE|DEVICE_airoha_an7581_DEVICE).*=y' .config || true
+          echo "== 本次关注的插件在 .config 里的状态 =="
+          grep -E 'CONFIG_PACKAGE_(msd_lite|luci-app-msd_lite|ddns-go|luci-app-ddns-go|luci-app-daed|daed|luci-theme-glass|asterisk|airoha-voice-ctl|homeproxy|sing-box|pbr|udpxy|rtp2httpd|ddns-scripts)(=| is not set)' .config | sort || true
+
+      - name: Prepare custom files overlay
+        run: |
+          mkdir -p files
+          cp -a custom/files/. files/
+          if [ -d custom/files-2010 ]; then
+            cp -a custom/files-2010/. files/
+          fi
+          find files -type f | sort
+
+      - name: Download sources
+        run: make download -j$(nproc)
+
+      - name: Build Firmware
+        shell: bash
+        run: |
+          make -j$(nproc) world 2>&1 | tee build.log
+
+      - name: Check build status
+        if: always()
+        run: |
+          if [ -f build.log ]; then
+            bash scripts/summarize-build-errors.sh build.log || true
+            tail -100 build.log
+          fi
+          ls -la bin/targets/airoha/an7581/ 2>/dev/null || echo "No files found in an7581 directory"
+
+      - name: Verify firmware content
+        if: always()
+        run: |
+          manifest="$(ls bin/targets/airoha/an7581/*.manifest 2>/dev/null | head -1)"
+          if [ -z "$manifest" ]; then
+            echo "::error::没有生成 manifest，构建未产出镜像"
+            exit 1
+          fi
+          echo "manifest: $manifest"
+          echo "== 镜像内软件包总数：$(grep -c . "$manifest") =="
+          echo "== 应当存在的包 =="
+          for p in msd_lite luci-app-msd_lite ddns-go luci-app-ddns-go luci-app-daed luci-theme-glass asterisk asterisk-chan-en75xx airoha-voice-ctl; do
+            if grep -q "^$p " "$manifest"; then echo "  [OK]  $p"; else echo "  [!!]  $p 不在镜像里"; fi
+          done
+          echo "== 应当缺席的包（出现说明没关掉）=="
+          if grep -E '^(udpxy|luci-app-udpxy|rtp2httpd|luci-app-rtp2httpd|homeproxy|luci-app-homeproxy|sing-box|pbr|luci-app-pbr|ddns-scripts|luci-app-ddns|luci-theme-argon|luci-app-argon-config|luci-app-passwall.*) ' "$manifest"; then
+            echo "::warning::上面这些包仍在镜像里，检查 config.fragment.2010"
+          else
+            echo "  （无，符合预期）"
+          fi
+          echo "== 语音相关（确认保留/去掉的分布）=="
+          grep -E '^(asterisk|airoha-voice-ctl)' "$manifest" | sort || echo "  （无语音包）"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: xg2010g-firmware
+          path: |
+            build.log
+            bin/targets/airoha/an7581/*.itb
+            bin/targets/airoha/an7581/*.manifest
+            bin/targets/airoha/an7581/config.buildinfo
+            bin/targets/airoha/an7581/feeds.buildinfo
+            bin/targets/airoha/an7581/profiles.json
+            bin/targets/airoha/an7581/version.buildinfo
+            bin/targets/airoha/an7581/sha256sums
+          retention-days: 30
+        if: always()
+
+      - name: Build release body
+        if: github.event_name == 'push' || github.event.inputs.release_type != 'none'
+        id: release_body
+        env:
+          RELEASE_NOTES: ${{ github.event.inputs.release_notes }}
+        run: |
+          {
+            printf '%s\n' "$RELEASE_NOTES"
+            echo ""
+            echo "---"
+            echo ""
+            echo "XG2010G（Gemtek XG2010G / Airoha AN7581）专属构建："
+            echo "- IPTV：msd_lite"
+            echo "- DDNS：ddns-go"
+            echo "- 代理：daed（含中文界面）"
+            echo "- 主题：glass"
+            echo "- 语音：保留运营商语音通话（Asterisk + asterisk-chan-en75xx），去掉本机电话主机功能"
+          } > /tmp/release_body.md
+          {
+            echo "body<<EOF"
+            cat /tmp/release_body.md
+            echo "EOF"
+          } >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        if: github.event_name == 'push' || github.event.inputs.release_type != 'none'
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ format('xg2010g-{0}-{1}', steps.version.outputs.date, steps.version.outputs.repo_commit) }}
+          name: ${{ format('ImmortalWrt for XG2010G {0}', steps.version.outputs.build_id) }}
+          body: ${{ steps.release_body.outputs.body }}
+          draft: false
+          prerelease: ${{ github.event.inputs.release_type == 'prerelease' }}
+          files: |
+            bin/targets/airoha/an7581/*.itb
+            bin/targets/airoha/an7581/*.manifest
+            bin/targets/airoha/an7581/config.buildinfo
+            bin/targets/airoha/an7581/feeds.buildinfo
+            bin/targets/airoha/an7581/profiles.json
+            bin/targets/airoha/an7581/version.buildinfo
+            bin/targets/airoha/an7581/sha256sums
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
