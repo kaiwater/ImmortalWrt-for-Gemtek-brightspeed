@@ -77,6 +77,7 @@ jobs:
           # 2010 专用 feed（kenzok8/openwrt-daede）放在最前面，保证同名包优先取它的版本
           if [ -f custom/feeds.conf.2010 ]; then
             cat custom/feeds.conf.2010 > feeds.conf
+            printf '\n' >> feeds.conf   # 防御：源文件末尾可能没有换行，否则会和下一行拼在一起
           else
             : > feeds.conf
           fi
