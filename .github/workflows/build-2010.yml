@@ -70,7 +70,16 @@ jobs:
       - name: Setup build environment
         run: |
           sudo apt update
-          sudo apt install -y build-essential clang gcc g++ binutils bzip2 gawk gettext git libncurses-dev libssl-dev python3 python3-setuptools rsync unzip wget xsltproc zlib1g-dev file which perl sed make
+          # llvm 提供未加版本号的 llc/opt/llvm-dis/llvm-strip（bpf.mk 需要）
+          sudo apt install -y build-essential clang llvm gcc g++ binutils bzip2 gawk gettext git libncurses-dev libssl-dev python3 python3-setuptools rsync unzip wget xsltproc zlib1g-dev file which perl sed make
+          # 兜底：若未版本化工具不存在，就用最新版本建软链（bpf.mk 里 LLVM_VER 为空时会找这些名字）
+          for t in clang llc opt llvm-dis llvm-strip; do
+            if ! command -v "$t" >/dev/null 2>&1; then
+              src="$(ls -1 /usr/bin/$t-* 2>/dev/null | sort -V | tail -1)"
+              [ -n "$src" ] && sudo ln -sf "$src" "/usr/bin/$t" && echo "linked /usr/bin/$t -> $src"
+            fi
+          done
+          command -v clang llc opt llvm-dis llvm-strip || true
 
       - name: Install feeds
         run: |
@@ -159,6 +168,11 @@ jobs:
             tail -100 build.log
           fi
           ls -la bin/targets/airoha/an7581/ 2>/dev/null || echo "No files found in an7581 directory"
+          echo "== 失败包的详细编译日志（最近修改的 4 个 compile.txt）=="
+          for f in $(ls -t logs/package/*/*/compile.txt logs/toolchain/*/compile.txt 2>/dev/null | head -4); do
+            echo "----- $f -----"
+            tail -80 "$f"
+          done
 
       - name: Verify firmware content
         if: always()
