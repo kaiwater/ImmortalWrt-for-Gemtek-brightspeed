@@ -7,6 +7,15 @@ on:
   push:
     branches:
       - master
+    # [custom] 2026-10-04 加 paths 过滤：以前任何 push 到 master 都会触发 XR1710G 构建
+    # 并发布 Release，导致只改 XG2010G（custom/*.2010、files-2010/、build-2010.yml）
+    # 也会顺带跑一次 XR1710G。现在只在下面这些文件变化时触发。
+    paths:
+      - '1710.config'
+      - 'custom/config.fragment'
+      - 'custom/feeds.conf.custom'
+      - 'custom/files/**'
+      - '.github/workflows/build-firmware.yml'
   workflow_dispatch:
     inputs:
       config_seed:
@@ -70,21 +79,71 @@ jobs:
       - name: Setup build environment
         run: |
           sudo apt update
-          sudo apt install -y build-essential clang gcc g++ binutils bzip2 gawk gettext git libncurses-dev libssl-dev python3 python3-setuptools rsync unzip wget xsltproc zlib1g-dev file which perl sed make
+          # [custom] llvm 提供未加版本号的 llc/opt/llvm-dis/llvm-strip（include/bpf.mk 需要）。
+          # 2026-10-04 起 daed/dae 需要编译 eBPF 程序，所以必须装 llvm。
+          sudo apt install -y build-essential clang llvm gcc g++ binutils bzip2 gawk gettext git libncurses-dev libssl-dev python3 python3-setuptools rsync unzip wget xsltproc zlib1g-dev file which perl sed make
+          # 兜底：若未版本化工具不存在，就用最新版本建软链
+          for t in clang llc opt llvm-dis llvm-strip; do
+            if ! command -v "$t" >/dev/null 2>&1; then
+              src="$(ls -1 /usr/bin/$t-* 2>/dev/null | sort -V | tail -1)"
+              [ -n "$src" ] && sudo ln -sf "$src" "/usr/bin/$t" && echo "linked /usr/bin/$t -> $src"
+            fi
+          done
+          command -v clang llc opt llvm-dis llvm-strip || true
 
       - name: Install feeds
         run: |
           # [custom] 自定义 feed 放在最前面：feeds 脚本按 feeds.conf 顺序取优先级，
-          # 同名包（如 luci-app-openclash）优先使用自定义源里的最新版。
+          # 同名包（如 luci-app-openclash、dae/daed）优先使用自定义源里的最新版。
           if [ -f custom/feeds.conf.custom ]; then
             cat custom/feeds.conf.custom > feeds.conf
+            printf '\n' >> feeds.conf   # 防御：源文件末尾可能没有换行，否则会和下一行拼在一起
           else
             : > feeds.conf
           fi
           cat feeds.conf.default >> feeds.conf
+          echo "== feeds.conf =="
+          cat feeds.conf
+          echo "== feeds.conf 预检 =="
+          # scripts/feeds 剥注释用的是 s/#.+$//，.+ 要求 # 后至少一个字符。
+          # 所以「裸 # 行」（整行只有一个 #）不会被当成注释，会触发
+          # "Syntax error in feeds.conf, line N"。这里提前拦住，给出可读的报错。
+          if grep -n '^#$' feeds.conf; then
+            echo "::error::feeds.conf 存在裸 # 行（上面已列出行号），请改成空行，或 # 后带文字"
+            exit 1
+          fi
+          bad=$(grep -vn '^[[:space:]]*\(#.*\)\?$' feeds.conf | grep -v '^[0-9]*:src-' || true)
+          if [ -n "$bad" ]; then
+            echo "::error::feeds.conf 存在非 src- 开头的有效行："
+            echo "$bad"
+            exit 1
+          fi
+          echo "  feeds.conf 预检通过"
           ./scripts/feeds update -a
           ./scripts/feeds install -a
           bash scripts/fix-stale-golang-host.sh
+
+      - name: Drop duplicate dae/daed from other feeds
+        run: |
+          # immortalwrt/packages 里也有同名 dae/daed，会与 kenzok8 的版本冲突。
+          # 这里把其它 feed 的副本删掉，只保留 daede feed 的版本。
+          shopt -s nullglob
+          removed=0
+          for d in package/feeds/*/daed package/feeds/*/dae; do
+            case "$d" in
+              package/feeds/daede/*) echo "保留: $d"; continue ;;
+            esac
+            echo "移除重复包: $d"
+            rm -rf "$d"
+            removed=$((removed + 1))
+          done
+          echo "移除数量: $removed"
+          echo "== daede feed 安装情况 =="
+          ls -l package/feeds/daede/ 2>/dev/null || echo "（没有找到 package/feeds/daede）"
+          echo "== nikki feed 安装情况 =="
+          ls -l package/feeds/nikki/ 2>/dev/null || echo "（没有找到 package/feeds/nikki）"
+          echo "== openclash feed 安装情况 =="
+          ls -l package/feeds/openclash/ 2>/dev/null || echo "（没有找到 package/feeds/openclash）"
 
       - name: Apply feed patches
         run: |
@@ -113,6 +172,12 @@ jobs:
           bash scripts/set-build-version.sh .config
           make defconfig
           grep -E 'CONFIG_(IMAGEOPT|EXTRA_IMAGE_NAME|VERSIONOPT|VERSION_DIST|VERSION_NUMBER|VERSION_CODE|VERSION_FILENAMES|VERSION_CODE_FILENAMES)[= ]' .config
+          echo "== 透明代理（4 个：openclash / homeproxy / nikki / daed）=="
+          grep -E 'CONFIG_PACKAGE_(luci-app-openclash|luci-app-homeproxy|luci-i18n-homeproxy-zh-cn|homeproxy|sing-box|luci-app-nikki|luci-i18n-nikki-zh-cn|nikki|mihomo-meta|yq|luci-app-daede|luci-app-daede_daed|luci-app-daede_dae|luci-app-daed|daed|v2ray-geoip|v2ray-geosite)(=| is not set)' .config | sort || true
+          echo "== daed 相关内核开关 =="
+          grep -E 'CONFIG_KERNEL_(DEBUG_INFO_BTF|DEBUG_INFO_REDUCED|BPF_EVENTS|BPF_STREAM_PARSER|XDP_SOCKETS)' .config || true
+          echo "== BPF 工具链 =="
+          grep -E '^CONFIG_(DEVEL|BPF_TOOLCHAIN_HOST|BPF_TOOLCHAIN_NONE|BPF_TOOLCHAIN_BUILD_LLVM|USE_LLVM_HOST)=' .config || true
 
       - name: Prepare custom files overlay
         run: |
@@ -150,6 +215,75 @@ jobs:
           ls -la bin/targets/ 2>/dev/null || echo "No files found in targets directory"
           echo "=== List all files in bin/ ==="
           ls -la bin/ 2>/dev/null || echo "No files found in bin directory"
+
+      - name: Report image size
+        if: always()
+        run: |
+          # [custom] XR1710G 的设备定义里没有 IMAGE_SIZE，构建时不会有 check-size 拦截，
+          # 所以超限不会报错 —— 但也不代表刷进去能启动。历史最大构建产物为 77.30 MiB，
+          # 这里把实际大小打印出来，并在超过该值时给出警告。
+          itb="$(ls bin/targets/airoha/an7581/*sysupgrade.itb 2>/dev/null | head -1)"
+          if [ -z "$itb" ]; then
+            echo "::warning::没有生成 sysupgrade.itb，构建未产出镜像"
+            exit 0
+          fi
+          size=$(stat -c %s "$itb")
+          mib=$(awk -v s="$size" 'BEGIN{printf "%.2f", s/1048576}')
+          echo "ITB : $itb"
+          echo "大小: ${mib} MiB"
+          # 77.30 MiB = 81060000 B 附近，是此前真机验证过的最大值
+          awk -v s="$size" 'BEGIN{
+            printf "对比历史已验证最大值 77.30 MiB：%s\n", (s/1048576 > 77.30 ? "超出" : "未超出");
+          }'
+          if [ "$size" -gt 81060000 ]; then
+            echo "::warning::镜像 ${mib} MiB 超过历史已验证的 77.30 MiB。XR1710G 的 U-Boot FIT 上限未经证实，刷入后可能无法启动，请谨慎。"
+          fi
+
+      - name: Collect proxy packages (for overlay install)
+        if: always()
+        run: |
+          # 把编出来的代理 .apk 单独收集上传：即使镜像因体积/启动风险不便使用，
+          # 也可以拷到设备装进 overlay。
+          # 注意：必须包含「只被代理依赖」的包（如 yq），否则单独安装会缺依赖。
+          mkdir -p proxy-pkgs
+          shopt -s nullglob
+          for pat in \
+            "bin/packages/*/*/mihomo-meta-*.apk" \
+            "bin/packages/*/*/mihomo-alpha-*.apk" \
+            "bin/packages/*/*/nikki-*.apk" \
+            "bin/packages/*/*/luci-app-nikki-*.apk" \
+            "bin/packages/*/*/luci-i18n-nikki-*.apk" \
+            "bin/packages/*/*/sing-box-*.apk" \
+            "bin/packages/*/*/homeproxy-*.apk" \
+            "bin/packages/*/*/luci-app-homeproxy-*.apk" \
+            "bin/packages/*/*/luci-i18n-homeproxy-*.apk" \
+            "bin/packages/*/*/dae-*.apk" \
+            "bin/packages/*/*/daed-*.apk" \
+            "bin/packages/*/*/luci-app-daede-*.apk" \
+            "bin/packages/*/*/luci-i18n-daede-*.apk" \
+            "bin/packages/*/*/v2ray-geoip-*.apk" \
+            "bin/packages/*/*/v2ray-geosite-*.apk" \
+            "bin/packages/*/*/yq-*.apk" \
+            "bin/packages/*/*/kmod-dummy-*.apk" \
+            "bin/packages/*/*/kmod-netlink-diag-*.apk" \
+            "bin/packages/*/*/luci-app-openclash-*.apk" \
+            "bin/packages/*/*/luci-i18n-openclash-*.apk" ; do
+            for f in $pat; do
+              [ -f "$f" ] && cp -v "$f" proxy-pkgs/
+            done
+          done
+          echo "== 收集到的代理相关包 =="
+          ls -la proxy-pkgs/ || true
+          du -sh proxy-pkgs/ 2>/dev/null || true
+
+      - name: Upload proxy packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: xr1710g-proxy-packages
+          path: proxy-pkgs/*
+          if-no-files-found: warn
+          retention-days: 30
+        if: always()
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
