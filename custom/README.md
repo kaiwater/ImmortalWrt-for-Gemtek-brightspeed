@@ -3,20 +3,24 @@
 本仓库是 `naoki66/ImmortalWrt-for-Gemtek-brightspeed` 的 fork，所有“个性化修改”都放在这个目录，
 上游（naoki66 + immortalwrt）更新时不会被覆盖。
 
-| 文件 | 作用 |
-| --- | --- |
-| `config.fragment` | XR1710G 插件开关（编译前追加到 `.config`，可增删要编译的插件） |
-| `config.fragment.2010` | XG2010G 插件开关（只影响 `build-2010.yml`） |
-| `feeds.conf.2010` | XG2010G 额外 feed（kenzok8/openwrt-daede、nikkinikki-org/OpenWrt-nikki） |
-| `files/` | 固件文件覆盖层（首次开机后台地址 `192.168.5.1`、DHCP 下发 `192.168.5.100-249`；以及「状态 → 信道分析」页面修复） |
-| `files-2010/` | XG2010G 专用文件覆盖层（默认主题设为 Aurora） |
+**两条构建线相互独立**：`custom/config.fragment` 与 `custom/files/` 服务于 XR1710G；
+`custom/config.fragment.2010`、`custom/feeds.conf.2010`、`custom/files-2010/` 只服务于 XG2010G。
+改 XG2010G 的东西时，请只动 `.2010` 后缀的文件与 `build-2010.yml`，不要碰共享文件。
 
-> OpenClash 相关文件（`feeds.conf.custom`、`scripts/fetch-openclash-core.sh`）已于 2026-10-04 移除。
+| 文件 | 作用 | 归属 |
+| --- | --- | --- |
+| `config.fragment` | 插件开关（编译前追加到 `.config`） | XR1710G |
+| `config.fragment.2010` | 插件开关（只被 `build-2010.yml` 使用） | XG2010G |
+| `feeds.conf.custom` | 额外 feed（OpenClash 官方源，编译时拉取最新版） | XR1710G |
+| `feeds.conf.2010` | 额外 feed（daede、nikki） | XG2010G |
+| `scripts/fetch-openclash-core.sh` | 编译时下载最新 mihomo 内核，打包进固件 `/etc/openclash/core/clash_meta` | XR1710G |
+| `files/` | 固件文件覆盖层（首次开机后台地址 `192.168.5.1`、DHCP 下发 `192.168.5.100-249`；以及「状态 → 信道分析」页面修复） | 共享 |
+| `files-2010/` | 固件文件覆盖层（默认主题设为 Aurora） | XG2010G |
 
 ## 常用操作
 
-- **增/减插件**：改 `custom/config.fragment`（XR1710G）或 `custom/config.fragment.2010`（XG2010G），
-  然后手动运行对应的构建工作流。
+- **改 XR1710G 插件**：改 `custom/config.fragment`，然后运行 `Build XR1710G Firmware`。
+- **改 XG2010G 插件**：改 `custom/config.fragment.2010`，然后运行 `Build XG2010G Firmware`。
 - **改后台地址**：改 `custom/files/etc/uci-defaults/99-custom-network.sh`（只在首次开机或刷机后首次启动生效）。
 - **同步上游**：运行 `Sync Upstream (naoki66 + ImmortalWrt)`，会自动合并并触发一次构建 + 发布 Release。
 
@@ -26,6 +30,12 @@
   同步上游时如果该文件冲突，会保留本仓库版本（因为里面含定制 hook）。上游 workflow 有大改动时，
   需要手动把新特性合并进来。
 - `config.seed` 不设保护，保持跟随 naoki66 上游更新；本仓库的插件开关一律写在 `custom/config.fragment*`。
+- **触发范围提醒**：`build-firmware.yml`（XR1710G）的 `on.push` **没有 paths 过滤**，
+  因此任何 push 到 `master` 都会触发一次 XR1710G 构建并发布 Release；
+  而 `build-2010.yml`（XG2010G）只在 `2010.config`、`custom/config.fragment.2010`、
+  `custom/feeds.conf.2010`、`custom/files-2010/**`、`custom/files/**`、
+  `build-2010.yml` 变化时触发。若只想改 XG2010G 又不想顺带跑 XR1710G，
+  可以给 `build-firmware.yml` 的 `on.push` 加上 `paths` 过滤（需自行评估）。
 
 ## 信道分析页面修复
 
@@ -47,6 +57,8 @@
 - 改完这个文件后**必须**做一次运行时验证：`tabs.firstElementChild.appendChild(tab)` 这一行原文没有行尾分号，如果在它后面追加以 `(` 开头的语句，会被 JS 解析成 `appendChild(tab)( ... )`，浏览器直接抛 `TypeError: ... is not a function`；`node --check` 只会做语法检查，查不出这个问题。可在 Node 里用桩对象真正执行一遍 `render()`，或至少刷一次页面确认无红色报错。
 
 ## XG2010G（2010.config）专用定制
+
+**本节只涉及 XG2010G，不影响 XR1710G。** 用到的文件全部带 `.2010` 后缀或位于 `files-2010/`。
 
 | 文件 | 作用 |
 | --- | --- |
@@ -72,7 +84,9 @@
   关闭 `luci-theme-glass`、`luci-theme-argon` 与 `luci-app-argon-config`。
 - **语音**：保留运营商语音通话所需（`asterisk` + `asterisk-pjsip` + `asterisk-chan-en75xx` + ulaw/alaw + rtp + sln/wav + playtones + `airoha-voice-ctl`）；
   关闭本机电话主机功能（`app-record`/`app-stack`/`bridge-softmix`/`res-musiconhold`/`sounds` 及 gsm/a-mu/g722/pcm 格式）。
-- **OpenClash**：不使用，已移除全部残留（feed、内核下载脚本、workflow hook、配置开关）。
+- **OpenClash**：XG2010G 不使用（`build-2010.yml` 不引用 `feeds.conf.custom`，也不下载 mihomo 内核；
+  配置里显式 `# CONFIG_PACKAGE_luci-app-openclash is not set`）。
+  **XR1710G 的 OpenClash 配置保持原样，未做任何改动。**
 
 > 注意：`daed` 会连带编译 BPF 工具链（llvm-bpf）；本仓库通过 `CONFIG_DEVEL=y` +
 > `CONFIG_BPF_TOOLCHAIN_HOST=y` + `CONFIG_USE_LLVM_HOST=y` 改用宿主机 LLVM，
