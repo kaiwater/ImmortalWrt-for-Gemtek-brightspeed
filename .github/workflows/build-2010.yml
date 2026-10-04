@@ -268,10 +268,17 @@ jobs:
             echo "  （无，符合预期）"
           fi
           echo "== 代理相关包（用于 overlay 后装）是否已产出 .apk =="
-          for pat in mihomo-meta nikki luci-app-nikki sing-box homeproxy luci-app-homeproxy daed luci-app-daede; do
+          for pat in mihomo-meta nikki luci-app-nikki sing-box homeproxy luci-app-homeproxy daed luci-app-daede yq; do
             n=$(find bin/packages -name "$pat-*.apk" 2>/dev/null | wc -l)
             if [ "$n" -gt 0 ]; then echo "  [OK]  $pat  ($n 个 .apk)"; else echo "  [!!]  $pat 没有产出 .apk"; fi
           done
+          echo "== 体积预算（64 MiB 上限）=="
+          itb="$(ls bin/targets/airoha/an7581/*sysupgrade.itb 2>/dev/null | head -1)"
+          if [ -n "$itb" ]; then
+            echo "  ITB: $(stat -c %s "$itb") B = $(awk -v s="$(stat -c %s "$itb")" 'BEGIN{printf "%.2f", s/1048576}') MiB"
+          else
+            echo "  （无 ITB）"
+          fi
           echo "== 语音相关（确认保留/去掉的分布）=="
           grep -E '^(asterisk|airoha-voice-ctl)' "$manifest" | sort || echo "  （无语音包）"
 
@@ -280,10 +287,15 @@ jobs:
         run: |
           # 无论三个代理是 =y 还是 =m，都把编出来的 .apk 收集起来单独上传：
           # 若镜像因体积超限失败，或后续想改成 =m，可以拷到设备装进 overlay。
+          #
+          # 注意：这里必须包含「只被代理依赖」的包 —— 因为当 nikki=m 时，
+          # OpenWrt 会把只被它依赖的 yq 也解析成 m，于是 yq 不进镜像；
+          # 而单独安装 nikki 时 apk 会因缺 yq 而拒绝安装。所以 yq 必须一起收集。
           mkdir -p proxy-pkgs
           shopt -s nullglob
           for pat in \
             "bin/packages/*/*/mihomo-meta-*.apk" \
+            "bin/packages/*/*/mihomo-alpha-*.apk" \
             "bin/packages/*/*/nikki-*.apk" \
             "bin/packages/*/*/luci-app-nikki-*.apk" \
             "bin/packages/*/*/luci-i18n-nikki-*.apk" \
@@ -294,8 +306,12 @@ jobs:
             "bin/packages/*/*/dae-*.apk" \
             "bin/packages/*/*/daed-*.apk" \
             "bin/packages/*/*/luci-app-daede-*.apk" \
+            "bin/packages/*/*/luci-i18n-daede-*.apk" \
             "bin/packages/*/*/v2ray-geoip-*.apk" \
-            "bin/packages/*/*/v2ray-geosite-*.apk" ; do
+            "bin/packages/*/*/v2ray-geosite-*.apk" \
+            "bin/packages/*/*/yq-*.apk" \
+            "bin/packages/*/*/kmod-dummy-*.apk" \
+            "bin/packages/*/*/kmod-netlink-diag-*.apk" ; do
             for f in $pat; do
               [ -f "$f" ] && cp -v "$f" proxy-pkgs/
             done
@@ -303,6 +319,12 @@ jobs:
           echo "== 收集到的代理相关包 =="
           ls -la proxy-pkgs/ || true
           du -sh proxy-pkgs/ 2>/dev/null || true
+          echo
+          echo "== 安装清单（拷到设备后按序执行）=="
+          echo "  # Nikki（mihomo 内核）"
+          echo "  apk add --allow-untrusted ./yq-*.apk ./mihomo-meta-*.apk ./nikki-*.apk ./luci-app-nikki-*.apk ./luci-i18n-nikki-*.apk"
+          echo "  # homeproxy（sing-box 内核）"
+          echo "  apk add --allow-untrusted ./sing-box-*.apk ./luci-app-homeproxy-*.apk ./luci-i18n-homeproxy-*.apk"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
