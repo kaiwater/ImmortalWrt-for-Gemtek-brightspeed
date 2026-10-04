@@ -2,8 +2,8 @@ name: Build XG2010G Firmware
 # 与 build-firmware.yml（XR1710G）相互独立：
 #   - 种子配置用 2010.config，定制开关用 custom/config.fragment.2010
 #   - 产物名 / Release tag / Release 标题都带 XG2010G，避免与 1710 撞车
-#   - 不使用 OpenClash feed 与 mihomo 内核（本机代理用 daed）
-# 定制文件：custom/config.fragment.2010、custom/files-2010/
+#   - 不使用 OpenClash feed 与 mihomo 内核（代理走 homeproxy / Nikki / daed）
+# 定制文件：custom/config.fragment.2010、custom/feeds.conf.2010、custom/files-2010/
 
 on:
   workflow_dispatch:
@@ -26,6 +26,7 @@ on:
     paths:
       - '2010.config'
       - 'custom/config.fragment.2010'
+      - 'custom/feeds.conf.2010'
       - 'custom/files-2010/**'
       - 'custom/files/**'
       - '.github/workflows/build-2010.yml'
@@ -47,6 +48,20 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
+
+      - name: Add Aurora theme package
+        run: |
+          # Aurora 主题的 Makefile 在仓库根目录，而 luci.mk 是用「目录名」推导包名的
+          # （LUCI_NAME?=$(notdir ${CURDIR})）。所以必须克隆到 package/luci-theme-aurora，
+          # 否则包名会变成 "aurora"，CONFIG_PACKAGE_luci-theme-aurora 就不会生效。
+          # 这也是主题作者 README 里给出的官方做法。
+          rm -rf package/luci-theme-aurora
+          git clone --depth 1 --branch master \
+            https://github.com/eamonxg/luci-theme-aurora.git package/luci-theme-aurora
+          echo "== Aurora 主题版本 =="
+          grep -E '^(PKG_VERSION|PKG_RELEASE):=' package/luci-theme-aurora/Makefile
+          echo "== 静态资源目录（决定 mediaurlbase）=="
+          ls -d package/luci-theme-aurora/htdocs/luci-static/*/ 2>/dev/null || true
 
       - name: Generate build version
         id: version
@@ -83,7 +98,8 @@ jobs:
 
       - name: Install feeds
         run: |
-          # 2010 专用 feed（kenzok8/openwrt-daede）放在最前面，保证同名包优先取它的版本
+          # 2010 专用 feed（kenzok8/openwrt-daede、OpenWrt-nikki）放在最前面，
+          # 保证同名包优先取它的版本
           if [ -f custom/feeds.conf.2010 ]; then
             cat custom/feeds.conf.2010 > feeds.conf
             printf '\n' >> feeds.conf   # 防御：源文件末尾可能没有换行，否则会和下一行拼在一起
@@ -114,6 +130,8 @@ jobs:
           echo "移除数量: $removed"
           echo "== daede feed 安装情况 =="
           ls -l package/feeds/daede/ 2>/dev/null || echo "（没有找到 package/feeds/daede）"
+          echo "== nikki feed 安装情况 =="
+          ls -l package/feeds/nikki/ 2>/dev/null || echo "（没有找到 package/feeds/nikki）"
 
       - name: Apply feed patches
         run: |
@@ -138,10 +156,18 @@ jobs:
           make defconfig
           echo "== 目标机型 =="
           grep -E 'CONFIG_TARGET_(airoha_an7581_DEVICE|DEVICE_airoha_an7581_DEVICE).*=y' .config || true
-          echo "== 本次关注的插件在 .config 里的状态 =="
-          grep -E 'CONFIG_PACKAGE_(msd_lite|luci-app-msd_lite|ddns-go|luci-app-ddns-go|luci-app-daede|luci-app-daede_daed|luci-app-daede_dae|luci-app-daed|daed|luci-theme-glass|asterisk|airoha-voice-ctl|homeproxy|sing-box|pbr|udpxy|rtp2httpd|ddns-scripts)(=| is not set)' .config | sort || true
+          echo "== IPTV / DDNS =="
+          grep -E 'CONFIG_PACKAGE_(rtp2httpd|luci-app-rtp2httpd|luci-i18n-rtp2httpd-zh-cn|msd_lite|luci-app-msd_lite|udpxy|luci-app-udpxy|ddns-go|luci-app-ddns-go|ddns-scripts|luci-app-ddns)(=| is not set)' .config | sort || true
+          echo "== 透明代理 =="
+          grep -E 'CONFIG_PACKAGE_(luci-app-homeproxy|luci-i18n-homeproxy-zh-cn|homeproxy|sing-box|luci-app-nikki|luci-i18n-nikki-zh-cn|nikki|mihomo-meta|luci-app-daede|luci-app-daede_daed|luci-app-daede_dae|luci-app-daed|daed|daed-geoip|daed-geosite|kmod-dummy|pbr|luci-app-pbr)(=| is not set)' .config | sort || true
+          echo "== 主题 =="
+          grep -E 'CONFIG_PACKAGE_(luci-theme-aurora|luci-theme-glass|luci-theme-argon|luci-app-argon-config|luci-app-openclash)(=| is not set)' .config | sort || true
+          echo "== 语音 =="
+          grep -E 'CONFIG_PACKAGE_(asterisk|asterisk-chan-en75xx|airoha-voice-ctl)(=| is not set)' .config | sort || true
           echo "== dae/daed 相关内核开关 =="
-          grep -E 'CONFIG_KERNEL_(DEBUG_INFO_BTF|DEBUG_INFO_REDUCED|BPF_EVENTS|XDP_SOCKETS)' .config || true
+          grep -E 'CONFIG_KERNEL_(DEBUG_INFO_BTF|DEBUG_INFO_REDUCED|BPF_EVENTS|BPF_STREAM_PARSER|XDP_SOCKETS)' .config || true
+          echo "== BPF 工具链 =="
+          grep -E '^CONFIG_(DEVEL|BPF_TOOLCHAIN_HOST|BPF_TOOLCHAIN_NONE|USE_LLVM_HOST)=' .config || true
 
       - name: Prepare custom files overlay
         run: |
@@ -174,6 +200,30 @@ jobs:
             tail -80 "$f"
           done
 
+      - name: Report image size
+        if: always()
+        run: |
+          # IMAGE_SIZE := 65536k（64 MiB）来自 U-Boot 0x90000000/0x94000000 双缓冲间隙，
+          # 是硬约束。超限时 check-size 会直接删掉 ITB，构建仍"成功"。
+          itb="$(ls bin/targets/airoha/an7581/*sysupgrade.itb 2>/dev/null | head -1)"
+          if [ -z "$itb" ]; then
+            echo "::error::没有生成 sysupgrade.itb —— 极可能是超出 IMAGE_SIZE(64 MiB) 被 check-size 删除。"
+            echo "  处理：把 custom/config.fragment.2010 里 homeproxy / Nikki 两组从 =y 改为 =m 后重编。"
+            exit 1
+          fi
+          size=$(stat -c %s "$itb")
+          mib=$(awk -v s="$size" 'BEGIN{printf "%.2f", s/1048576}')
+          limit=65536
+          echo "ITB: $itb"
+          echo "大小: ${mib} MiB / 上限 64.00 MiB"
+          awk -v s="$size" -v l="$limit" 'BEGIN{
+            pct = s/l*100;
+            printf "占用: %.1f%%  余量: %.2f MiB\n", pct, (l-s)/1048576;
+          }'
+          if [ "$size" -gt 62914 ]; then
+            echo "::warning::镜像已超过 60 MiB，余量不足 4 MiB，后续再加包会超限。"
+          fi
+
       - name: Verify firmware content
         if: always()
         run: |
@@ -185,17 +235,53 @@ jobs:
           echo "manifest: $manifest"
           echo "== 镜像内软件包总数：$(grep -c . "$manifest") =="
           echo "== 应当存在的包 =="
-          for p in msd_lite luci-app-msd_lite ddns-go luci-app-ddns-go luci-app-daede daed v2ray-geoip luci-theme-glass asterisk asterisk-chan-en75xx airoha-voice-ctl; do
+          for p in \
+            rtp2httpd luci-app-rtp2httpd \
+            ddns-go luci-app-ddns-go \
+            luci-app-homeproxy homeproxy sing-box \
+            luci-app-nikki nikki mihomo-meta \
+            luci-app-daede daed \
+            luci-theme-aurora \
+            asterisk asterisk-chan-en75xx airoha-voice-ctl ; do
             if grep -q "^$p " "$manifest"; then echo "  [OK]  $p"; else echo "  [!!]  $p 不在镜像里"; fi
           done
           echo "== 应当缺席的包（出现说明没关掉）=="
-          if grep -E '^(udpxy|luci-app-udpxy|rtp2httpd|luci-app-rtp2httpd|homeproxy|luci-app-homeproxy|sing-box|pbr|luci-app-pbr|ddns-scripts|luci-app-ddns|luci-theme-argon|luci-app-argon-config|luci-app-daed|luci-i18n-daed-zh-cn|dae|daed-geoip|daed-geosite|luci-app-passwall.*) ' "$manifest"; then
+          if grep -E '^(msd_lite|luci-app-msd_lite|luci-i18n-msd_lite-zh-cn|udpxy|luci-app-udpxy|luci-theme-glass|luci-theme-argon|luci-app-argon-config|luci-app-openclash|luci-i18n-openclash-zh-cn|luci-app-daed|luci-i18n-daed-zh-cn|daed-geoip|daed-geosite|pbr|luci-app-pbr|ddns-scripts|ddns-scripts-services|luci-app-ddns|luci-app-passwall.*) ' "$manifest"; then
             echo "::warning::上面这些包仍在镜像里，检查 config.fragment.2010"
           else
             echo "  （无，符合预期）"
           fi
           echo "== 语音相关（确认保留/去掉的分布）=="
           grep -E '^(asterisk|airoha-voice-ctl)' "$manifest" | sort || echo "  （无语音包）"
+
+      - name: Collect proxy packages (for overlay install)
+        if: always()
+        run: |
+          # 无论三个代理是 =y 还是 =m，都把编出来的 .apk 收集起来单独上传：
+          # 若镜像因体积超限失败，或后续想改成 =m，可以拷到设备装进 overlay。
+          mkdir -p proxy-pkgs
+          shopt -s nullglob
+          for pat in \
+            "bin/packages/*/*/mihomo-meta-*.apk" \
+            "bin/packages/*/*/nikki-*.apk" \
+            "bin/packages/*/*/luci-app-nikki-*.apk" \
+            "bin/packages/*/*/luci-i18n-nikki-*.apk" \
+            "bin/packages/*/*/sing-box-*.apk" \
+            "bin/packages/*/*/homeproxy-*.apk" \
+            "bin/packages/*/*/luci-app-homeproxy-*.apk" \
+            "bin/packages/*/*/luci-i18n-homeproxy-*.apk" \
+            "bin/packages/*/*/dae-*.apk" \
+            "bin/packages/*/*/daed-*.apk" \
+            "bin/packages/*/*/luci-app-daede-*.apk" \
+            "bin/packages/*/*/v2ray-geoip-*.apk" \
+            "bin/packages/*/*/v2ray-geosite-*.apk" ; do
+            for f in $pat; do
+              [ -f "$f" ] && cp -v "$f" proxy-pkgs/
+            done
+          done
+          echo "== 收集到的代理相关包 =="
+          ls -la proxy-pkgs/ || true
+          du -sh proxy-pkgs/ 2>/dev/null || true
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
@@ -213,6 +299,15 @@ jobs:
           retention-days: 30
         if: always()
 
+      - name: Upload proxy packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: xg2010g-proxy-packages
+          path: proxy-pkgs/*
+          if-no-files-found: warn
+          retention-days: 30
+        if: always()
+
       - name: Build release body
         if: github.event_name == 'push' || github.event.inputs.release_type != 'none'
         id: release_body
@@ -225,11 +320,12 @@ jobs:
             echo "---"
             echo ""
             echo "XG2010G（Gemtek XG2010G / Airoha AN7581）专属构建："
-            echo "- IPTV：msd_lite"
+            echo "- IPTV：rtp2httpd（组播转单播 + RTSP 时移回看 + FCC 快速换台）"
             echo "- DDNS：ddns-go"
-            echo "- 代理：daed（含中文界面）"
-            echo "- 主题：glass"
+            echo "- 透明代理：homeproxy / Nikki / daed 三者均已编入，**同一时间只启用一个**"
+            echo "- 主题：Aurora"
             echo "- 语音：保留运营商语音通话（Asterisk + asterisk-chan-en75xx），去掉本机电话主机功能"
+            echo "- OpenClash：不使用，已移除全部残留"
           } > /tmp/release_body.md
           {
             echo "body<<EOF"

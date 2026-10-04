@@ -74,13 +74,7 @@ jobs:
 
       - name: Install feeds
         run: |
-          # [custom] 自定义 feed 放在最前面：feeds 脚本按 feeds.conf 顺序取优先级，
-          # 同名包（如 luci-app-openclash）优先使用自定义源里的最新版。
-          if [ -f custom/feeds.conf.custom ]; then
-            cat custom/feeds.conf.custom > feeds.conf
-          else
-            : > feeds.conf
-          fi
+          : > feeds.conf
           cat feeds.conf.default >> feeds.conf
           ./scripts/feeds update -a
           ./scripts/feeds install -a
@@ -119,13 +113,6 @@ jobs:
           # [custom] 固件文件覆盖层（首次开机后台地址 192.168.5.1 等）
           mkdir -p files
           cp -a custom/files/. files/
-
-      - name: Bundle latest OpenClash core
-        run: |
-          # [custom] 编译时把最新 mihomo 内核打进固件
-          if [ -f custom/scripts/fetch-openclash-core.sh ]; then
-            bash custom/scripts/fetch-openclash-core.sh
-          fi
 
       - name: Download sources
         run: make download -j$(nproc)
