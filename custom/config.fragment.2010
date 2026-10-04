@@ -49,30 +49,49 @@ CONFIG_PACKAGE_luci-i18n-ddns-go-zh-cn=y
 # 镜像上限 IMAGE_SIZE := 65536k（64 MiB，来自 U-Boot 0x90000000/0x94000000
 # 双缓冲间隙，是硬约束）。已知基线：
 #     · 仅 daed + BTF + Asterisk + glass + msd_lite = 实测 48.42 MiB
-#     · 本次再叠加 sing-box(homeproxy) + mihomo(Nikki) 后，预估约 75~82 MiB
-#   → 很可能触发 check-size 删除 ITB，构建"成功"但没有镜像。
+# ---------- ③ 透明代理：daed 编入固件，homeproxy / Nikki 只编译 ----------
 #
-# 若构建失败或想稳妥，把下面「三个代理」段里的 homeproxy / Nikki 两组
-# 从 =y 改成 =m（只编译不编入），产物仍在
-#   bin/packages/aarch64_cortex-a53/<feed>/*.apk
-# 且 build-2010.yml 会把它们单独收集成 artifact "xg2010g-proxy-packages"，
-# 拷到设备后 apk add --allow-untrusted 装进 overlay（实测有 385 MiB 可用），
-# 同样可以完成三个方案的 PPE 影响对比测试。
+# 📌 2026-10-04 实测结论（run 37187750400，三个都 =y）：
+#   WARNING: Image file ...-squashfs-sysupgrade.itb is too big:
+#            81646644 > 67108864
+#   → 镜像 77.86 MiB，上限 64 MiB，超 13.86 MiB。三个全编入**物理上不可能**。
+#
+#   各包实测 .apk 大小（来自 artifact xg2010g-proxy-packages）：
+#     daed          23.83 MiB   （daed + dae 内核 + 内嵌前端）
+#     mihomo-meta   20.49 MiB   （Nikki 的内核）
+#     sing-box      15.00 MiB   （homeproxy 的内核）
+#     v2ray-geoip    4.49 MiB   （daed 依赖，保留）
+#     v2ray-geosite  0.67 MiB   （daed 依赖，保留）
+#   由基线 48.42 MiB（仅 daed）反推，squashfs 压缩比约 0.80：
+#     丢 Nikki      → 77.86 − 16.4 = 61.5 MiB（余量仅 2.5 MiB，太险）
+#     丢 homeproxy  → 77.86 − 12.5 = 65.4 MiB（仍超限）
+#     丢两个        → 77.86 − 28.9 = 48.9 MiB（余量 15 MiB）✅  ← 采用此方案
+#
+#   因此：**daed 保持 =y 编入固件**（它是你指定的方案，也是三个里唯一需要
+#   内核 BTF/BPF 的，同时是 PPE 测试最可能的赢家）；homeproxy 与 Nikki
+#   改为 =m（只编译不编入）。三者的 .apk 都会出现在 artifact
+#   "xg2010g-proxy-packages" 里，刷机后按需装进 overlay（实测 385 MiB 可用）：
+#     apk add --allow-untrusted ./sing-box-*.apk ./homeproxy-*.apk ./luci-app-homeproxy-*.apk
+#     apk add --allow-untrusted ./mihomo-meta-*.apk ./nikki-*.apk ./luci-app-nikki-*.apk
+#   这样三个方案都能在设备上跑起来，PPE 影响对比测试不受影响。
+#
+#   若以后想改成「daed + homeproxy 都编入」，把下面 3.1 段改回 =y 即可，
+#   但要先确认镜像不超过 64 MiB（预估 61.5 MiB，余量很小）。
 #
 # ⚠️ 另一个必须注意的点：三个透明代理会同时争抢 DNS 接管、TPROXY/nftables
 # 规则与路由表。同一时间只应启用一个（其余 disable），否则行为不可预期。
 
-# --- 3.1 homeproxy（sing-box 内核）---
-CONFIG_PACKAGE_luci-app-homeproxy=y
-CONFIG_PACKAGE_luci-i18n-homeproxy-zh-cn=y
-CONFIG_PACKAGE_homeproxy=y
-CONFIG_PACKAGE_sing-box=y
+# --- 3.1 homeproxy（sing-box 内核）—— 只编译，不编入 ---
+CONFIG_PACKAGE_luci-app-homeproxy=m
+CONFIG_PACKAGE_luci-i18n-homeproxy-zh-cn=m
+CONFIG_PACKAGE_homeproxy=m
+CONFIG_PACKAGE_sing-box=m
 
-# --- 3.2 Nikki（mihomo 内核）---
-CONFIG_PACKAGE_luci-app-nikki=y
-CONFIG_PACKAGE_luci-i18n-nikki-zh-cn=y
-CONFIG_PACKAGE_nikki=y
-CONFIG_PACKAGE_mihomo-meta=y
+# --- 3.2 Nikki（mihomo 内核）—— 只编译，不编入 ---
+CONFIG_PACKAGE_luci-app-nikki=m
+CONFIG_PACKAGE_luci-i18n-nikki-zh-cn=m
+CONFIG_PACKAGE_nikki=m
+CONFIG_PACKAGE_mihomo-meta=m
 # Nikki 的依赖（显式写出便于核对；缺 kmod-dummy 会导致 nikki 被丢弃）
 CONFIG_PACKAGE_kmod-dummy=y
 CONFIG_PACKAGE_kmod-inet-diag=y

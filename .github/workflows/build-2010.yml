@@ -254,19 +254,24 @@ jobs:
           for p in \
             rtp2httpd luci-app-rtp2httpd \
             ddns-go luci-app-ddns-go \
-            luci-app-homeproxy homeproxy sing-box \
-            luci-app-nikki nikki mihomo-meta \
-            luci-app-daede daed \
+            luci-app-daede daed v2ray-geoip v2ray-geosite \
             luci-theme-aurora \
             asterisk asterisk-chan-en75xx airoha-voice-ctl ; do
             if grep -q "^$p " "$manifest"; then echo "  [OK]  $p"; else echo "  [!!]  $p 不在镜像里"; fi
           done
           echo "== 应当缺席的包（出现说明没关掉）=="
-          if grep -E '^(msd_lite|luci-app-msd_lite|luci-i18n-msd_lite-zh-cn|udpxy|luci-app-udpxy|luci-theme-glass|luci-theme-argon|luci-app-argon-config|luci-app-openclash|luci-i18n-openclash-zh-cn|luci-app-daed|luci-i18n-daed-zh-cn|daed-geoip|daed-geosite|pbr|luci-app-pbr|ddns-scripts|ddns-scripts-services|luci-app-ddns|luci-app-passwall.*) ' "$manifest"; then
+          echo "   注：homeproxy/sing-box/Nikki/mihomo 因 64 MiB 体积上限改为只编译不编入，"
+          echo "       它们应在 artifact xg2010g-proxy-packages 里，不应出现在 manifest。"
+          if grep -E '^(msd_lite|luci-app-msd_lite|luci-i18n-msd_lite-zh-cn|udpxy|luci-app-udpxy|luci-theme-glass|luci-theme-argon|luci-app-argon-config|luci-app-openclash|luci-i18n-openclash-zh-cn|luci-app-daed|luci-i18n-daed-zh-cn|daed-geoip|daed-geosite|pbr|luci-app-pbr|ddns-scripts|ddns-scripts-services|luci-app-ddns|luci-app-passwall.*|homeproxy|luci-app-homeproxy|luci-i18n-homeproxy-zh-cn|sing-box|nikki|luci-app-nikki|luci-i18n-nikki-zh-cn|mihomo|mihomo-meta|mihomo-alpha) ' "$manifest"; then
             echo "::warning::上面这些包仍在镜像里，检查 config.fragment.2010"
           else
             echo "  （无，符合预期）"
           fi
+          echo "== 代理相关包（用于 overlay 后装）是否已产出 .apk =="
+          for pat in mihomo-meta nikki luci-app-nikki sing-box homeproxy luci-app-homeproxy daed luci-app-daede; do
+            n=$(find bin/packages -name "$pat-*.apk" 2>/dev/null | wc -l)
+            if [ "$n" -gt 0 ]; then echo "  [OK]  $pat  ($n 个 .apk)"; else echo "  [!!]  $pat 没有产出 .apk"; fi
+          done
           echo "== 语音相关（确认保留/去掉的分布）=="
           grep -E '^(asterisk|airoha-voice-ctl)' "$manifest" | sort || echo "  （无语音包）"
 
@@ -338,7 +343,9 @@ jobs:
             echo "XG2010G（Gemtek XG2010G / Airoha AN7581）专属构建："
             echo "- IPTV：rtp2httpd（组播转单播 + RTSP 时移回看 + FCC 快速换台）"
             echo "- DDNS：ddns-go"
-            echo "- 透明代理：homeproxy / Nikki / daed 三者均已编入，**同一时间只启用一个**"
+            echo "- 透明代理：daed 已编入固件；homeproxy(sing-box) 与 Nikki(mihomo) 因 64 MiB"
+            echo "  镜像上限改为只编译不编入，.apk 在 artifact xg2010g-proxy-packages 里，"
+            echo "  可 apk add --allow-untrusted 装进 overlay。**同一时间只应启用一个。**"
             echo "- 主题：Aurora"
             echo "- 语音：保留运营商语音通话（Asterisk + asterisk-chan-en75xx），去掉本机电话主机功能"
             echo "- OpenClash：不使用，已移除全部残留"
