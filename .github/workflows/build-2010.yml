@@ -192,6 +192,15 @@ jobs:
           if [ -d custom/files-2010 ]; then
             cp -a custom/files-2010/. files/
           fi
+          # 兜底修正可执行位：Windows 上 git 的 core.fileMode 默认为 false，
+          # 本地新增脚本时容易丢掉 100755，脚本进固件后会「不可执行」而静默失效。
+          # 用 git 索引里记录的模式为准，只对索引标记为 100755 的文件补 chmod。
+          git ls-files -s custom/files custom/files-2010 2>/dev/null \
+            | awk '$1 == "100755" { p = $4; sub(/^custom\/files-2010\//, "files/", p); sub(/^custom\/files\//, "files/", p); print p }' \
+            | while read -r f; do [ -f "$f" ] && chmod 755 "$f"; done
+          echo "== 可执行文件（应为 755）=="
+          find files -type f -perm /111 -exec ls -l {} + 2>/dev/null || true
+          echo "== 全部覆盖文件 =="
           find files -type f | sort
 
       - name: Download sources

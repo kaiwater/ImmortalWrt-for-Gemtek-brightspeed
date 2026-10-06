@@ -1,0 +1,26 @@
+#!/bin/sh
+#
+# XG2010G：覆盖 autocore 的 /sbin/tempinfo
+#
+# 用途：LuCI 概览页「系统」板块的「温度」一行。rpcd 的 luci.getTempInfo 就是
+#       popen 这个脚本，把它 stdout 原样填进那一格。
+#
+# autocore 原版只输出 CPU 一路（"CPU: 60.6°C"）。这里改成列出全部可读温度源，
+# 让概览页一眼就能看到 CPU、两个万兆 PHY 和 PON 光模块。
+#
+# 数据来源与 LuCI「温度」板块（view/status/include/15_temperatures.js）共用同一个
+# 采集器 /usr/libexec/xg2010g-temps，避免两处口径不一致。
+#
+# 说明：本文件由 custom/files-2010/ 提供。rootfs 组装阶段（include/image.mk 的
+#       prepare_rootfs）是在所有包安装完之后才覆盖 files/ 的，所以能盖掉
+#       autocore 装进去的同名文件。
+
+HELPER=/usr/libexec/xg2010g-temps
+
+if [ ! -x "$HELPER" ]; then
+	printf '无温度信息'
+	exit 0
+fi
+
+# 命令替换会去掉末尾换行，与原版 tempinfo 的 echo -n 行为保持一致
+printf '%s' "$("$HELPER" --line)"
