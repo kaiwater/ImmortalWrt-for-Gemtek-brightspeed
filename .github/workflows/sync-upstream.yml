@@ -1,7 +1,11 @@
-name: Sync Upstream (naoki66 + ImmortalWrt)
+name: Sync Upstream (naoki66)
 
-# 每次合并只做“拉取 + 合并 + 推送”，定制内容全部放在 custom/ 目录，
+# 每次只做「拉取 + 合并 + 推送」，定制内容全部放在 custom/ 目录，
 # 因此上游更新不会覆盖本仓库的插件清单、后台地址等定制。
+#
+# 只跟随 naoki66 的树，不再直接合并 immortalwrt/immortalwrt：
+# immortalwrt 由 naoki66 负责合并，本仓库再直连上游只会制造重复合并和冲突。
+# （历史上这里同时拉 immortalwrt，冲突时靠「跳过 + 警告」兜底，实际上并没有必要。）
 
 on:
   schedule:
@@ -49,51 +53,46 @@ jobs:
             '.github/workflows/sync-upstream.yml merge=keep-ours' \
             > .git/info/attributes
 
-      - name: Add upstream remotes
+      - name: Add upstream remote
         run: |
-          git remote add parent https://github.com/naoki66/ImmortalWrt-for-Gemtek-XR1710G.git 2>/dev/null || true
-          git remote set-url parent https://github.com/naoki66/ImmortalWrt-for-Gemtek-XR1710G.git
-          git remote add upstream https://github.com/immortalwrt/immortalwrt.git 2>/dev/null || true
-          git remote set-url upstream https://github.com/immortalwrt/immortalwrt.git
+          # 注意：naoki66 的仓库改过名（旧名 ImmortalWrt-for-Gemtek-XR1710G）。
+          # GitHub 对改名仓库做永久重定向，新旧 URL 指向同一个仓库，
+          # 所以这里写哪个都能 fetch 到 —— 仓库改名不是同步失败的原因。
+          git remote add parent https://github.com/naoki66/ImmortalWrt-for-Gemtek-brightspeed.git 2>/dev/null || true
+          git remote set-url parent https://github.com/naoki66/ImmortalWrt-for-Gemtek-brightspeed.git
 
-      - name: Fetch upstreams
+      - name: Fetch upstream
         run: |
           git fetch --no-tags parent +refs/heads/master:refs/remotes/parent/master
-          git fetch --no-tags upstream +refs/heads/master:refs/remotes/upstream/master
 
       - name: Merge updates
         id: merge
         run: |
-          changed=false
-          merged=""
-          skipped=""
-          for ref in parent/master upstream/master; do
-            if git merge-base --is-ancestor "$ref" HEAD; then
-              echo "== $ref：没有新提交，跳过"
-              continue
-            fi
-            ahead="$(git rev-list --count HEAD.."$ref")"
-            echo "== $ref：领先 HEAD ${ahead} 个提交，尝试合并"
-            if git merge --no-edit "$ref"; then
-              changed=true
-              merged="$merged $ref"
-              continue
-            fi
-            if [ "$ref" = "parent/master" ]; then
-              echo "::error::合并 parent/master（naoki66）出现冲突，需要人工处理。冲突文件："
-              git diff --name-only --diff-filter=U
-              git merge --abort || true
-              exit 1
-            fi
-            echo "::warning::合并 upstream/master（immortalwrt）出现冲突，已撤销本次合并并跳过；immortalwrt 由 naoki66 负责合并，本仓库只需跟随 naoki66 的树。冲突文件："
-            git diff --name-only --diff-filter=U
-            git merge --abort || true
-            skipped="$skipped $ref"
-          done
-          echo "changed=$changed" >> "$GITHUB_OUTPUT"
-          echo "merged=$merged" >> "$GITHUB_OUTPUT"
-          echo "skipped=$skipped" >> "$GITHUB_OUTPUT"
-          echo "已合并：${merged:-无}；因冲突跳过：${skipped:-无}"
+          ref=parent/master
+          if git merge-base --is-ancestor "$ref" HEAD; then
+            echo "== $ref：没有新提交，跳过"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          ahead="$(git rev-list --count HEAD.."$ref")"
+          echo "== $ref：领先 HEAD ${ahead} 个提交，尝试合并"
+
+          if git merge --no-edit "$ref"; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "merged=$ref" >> "$GITHUB_OUTPUT"
+            echo "已合并：$ref"
+            exit 0
+          fi
+
+          # 冲突了。这里故意不自动兜底：本仓库与上游在少量文件上是「双方都改过」的
+          # 实质分歧（目前是 README.md 与 feeds.conf.default），自动选一边会把另一边的
+          # 改动悄悄丢掉。宁可失败并留下冲突清单，让人工决定。
+          echo "::error::合并 $ref 出现冲突，需要人工处理。冲突文件："
+          git diff --name-only --diff-filter=U
+          echo "::error::解完冲突后重新跑一次本工作流即可。"
+          git merge --abort || true
+          exit 1
 
       - name: Check upstream workflow drift
         if: always()
@@ -125,6 +124,5 @@ jobs:
         run: |
           echo "=== Sync Result ==="
           echo "本次已合并：${{ steps.merge.outputs.merged }}"
-          echo "因冲突跳过：${{ steps.merge.outputs.skipped }}"
           git log --oneline -5 || true
           git status --short || true
