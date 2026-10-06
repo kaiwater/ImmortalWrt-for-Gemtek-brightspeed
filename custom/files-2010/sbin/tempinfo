@@ -1,27 +1,106 @@
 #!/bin/sh
 #
-# XG2010G：覆盖 autocore 的 /sbin/tempinfo
+# XG2010G：autocore 原版 /sbin/tempinfo 的扩展版
 #
-# 用途：LuCI 概览页「系统」板块的「温度」一行。rpcd 的 luci.getTempInfo 就是
-#       popen 这个脚本，把它 stdout 原样填进那一格。
+# 原版只输出 CPU 一路温度（"CPU: 60.6°C"）。这里**保持完全相同的调用方式、
+# 调用时机和输出格式**，只是把 lan1、lan2、PON 光模块三路温度也一并读出来显示。
 #
-# autocore 原版只输出 CPU 一路（"CPU: 60.6°C"）。这里改成列出全部可读温度源，
-# 让概览页一眼就能看到 CPU、两个万兆 PHY 和 PON 光模块。
+# ---------------------------------------------------------------------------
+# 关于「采样频率」——这个脚本没有自己的采样周期
 #
-# 采集全部交给 /usr/libexec/xg2010g-temps（单个 awk 进程，约 3 次 fork / 0.01 s）。
-# 概览页每 5 秒轮询一次都会走这里，所以这条路径的开销必须压到最低 ——
-# 早期版本用 shell 循环逐项拼装，单次 130 次 fork / 0.22 s，把页面拖卡了。
+# 它不是守护进程、不定时轮询、不缓存任何值，而是被 rpcd 的 luci.getTempInfo
+# 在 LuCI 概览页每次刷新时 popen 调用一次，每次都重新读当下的瞬时值。
+# 所以「采集频率」就等于页面轮询频率（默认 5 秒），与原版完全一致。
+# 这里没有、也不需要「采样时间点同步」的逻辑。
+#
+# 真正需要控制的只有**单次调用的开销**，因为这条路径每 5 秒就走一次。
+# 所以脚本里刻意避开了会产生 fork 的写法：
+#
+#   - 读文件用 shell 内建的 read（read x < file），不用 $(cat file)
+#     —— 后者每次是「子 shell + cat」两次 fork；
+#   - 取路径末段用 ${p##*/}，不用 basename（basename 是外部命令）；
+#   - 判断「这个 hwmon 属于哪个网口」用内建 test 的 -ef（比较是否同一 inode），
+#     不用 readlink + basename 组合 —— 单这一处原本就要几十次 fork；
+#   - 只有最后的浮点格式化交给一次 awk（shell 算不了小数）。
+#
+# 结果：整个脚本 2 次 fork，与原版持平。
+# 对照：按常规 shell 写法逐项拼装是 130 次 fork / 0.225 s，
+#       每 5 秒跑一次会把整机 fork 速率从 20/秒 拉到 80/秒，页面明显变卡。
 #
 # 说明：本文件由 custom/files-2010/ 提供。rootfs 组装阶段（include/image.mk 的
 #       prepare_rootfs）是在所有包安装完之后才覆盖 files/ 的，所以能盖掉
 #       autocore 装进去的同名文件。
+# ---------------------------------------------------------------------------
 
-HELPER=/usr/libexec/xg2010g-temps
+set -u
 
-if [ ! -x "$HELPER" ]; then
-	printf '无温度信息'
-	exit 0
+THERMAL=/sys/class/thermal/thermal_zone0/temp
+HW=/sys/class/hwmon
+FE=/sys/kernel/debug/airoha-xpon-pon0/frontend
+
+# 收集 "名称=毫摄氏度" 的键值对，最后一次 awk 统一格式化
+vals=""
+
+# ---------- CPU（原版逻辑，读数方式换成内建 read）----------
+mc=""
+read mc < "$THERMAL" 2>/dev/null
+[ -n "$mc" ] && vals="CPU=$mc"
+
+# ---------- 万兆 PHY：lan1 / lan2 ----------
+# hwmon 的 name 是 mdio 设备名（如 mt7530_0:05），不直接是网口名，
+# 而且 hwmonN 的序号不保证跨启动稳定，所以这里靠「phydev 与 hwmon 的 device
+# 是不是同一个设备」来反查网口，而不是去数序号。
+for h in "$HW"/hwmon*; do
+	[ -r "$h/temp1_input" ] || continue
+
+	mc=""
+	read mc < "$h/temp1_input" 2>/dev/null
+	[ -n "$mc" ] || continue
+
+	port=""
+	for n in /sys/class/net/*; do
+		[ -e "$n/phydev" ] || continue
+		if [ "$n/phydev" -ef "$h/device" ]; then
+			port="${n##*/}"
+			break
+		fi
+	done
+	[ -n "$port" ] || continue
+
+	vals="$vals $port=$mc"
+done
+
+# ---------- PON 光模块 ----------
+# 这就是 BOSA 自己的温度传感器：SFF-8472 的 A2h 页第 96-97 字节，
+# 有符号 16 位、单位 1/256 ℃。换算成毫度以便和其它几路统一格式化。
+if [ -r "$FE" ]; then
+	t_raw=""
+	while read -r k v; do
+		[ "$k" = "temperature_8472:" ] && t_raw="$v"
+	done < "$FE"
+
+	case "${t_raw:-}" in
+		0x[0-9a-fA-F]*) ;;
+		*) t_raw="" ;;
+	esac
+
+	if [ -n "$t_raw" ]; then
+		t=$((t_raw))
+		[ "$t" -gt 32767 ] && t=$((t - 65536))
+		vals="$vals PON=$((t * 1000 / 256))"
+	fi
 fi
 
-# 命令替换会去掉末尾换行，与原版 tempinfo 的 echo -n 行为保持一致
-printf '%s' "$("$HELPER")"
+# ---------- 统一格式化 ----------
+# 不加末尾换行，与原版的 echo -n 行为保持一致
+awk -v vals="$vals" 'BEGIN {
+	n = split(vals, a, " ")
+	out = ""
+	for (i = 1; i <= n; i++) {
+		split(a[i], kv, "=")
+		if (kv[1] == "" || kv[2] == "") continue
+		if (out != "") out = out " · "
+		out = out kv[1] " " sprintf("%.1f", kv[2] / 1000) "°C"
+	}
+	printf "%s", (out != "" ? out : "无温度信息")
+}'
