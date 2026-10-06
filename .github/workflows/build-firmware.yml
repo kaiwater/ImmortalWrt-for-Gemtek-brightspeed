@@ -189,7 +189,21 @@ jobs:
       - name: Build Firmware
         shell: bash
         run: |
-          make -j2 world 2>&1 | tee build.log
+          # [custom] 2026-10-06 加 V=w。
+          # 原因：OpenWrt 默认非 verbose 时，子 make 的 stdout 和 stderr 被
+          # include/verbose.mk 的 SILENT 变量整体丢进 /dev/null
+          #   SILENT:=/dev/null $(if $(findstring w,$(OPENWRT_VERBOSE)),,2>&1)
+          #   SUBMAKE=cmd() { $(SILENT) $(MAKE) -s "$@" ... } 8>&1 9>&2
+          # 只有 OpenWrt 自己经 MESSAGE/ERROR_MESSAGE 宏（写 >&8 / >&9）输出的内容可见；
+          # dtc / mkimage / dd 这类外部工具的错误走 fd2，会被 2>&1 一起吞掉。
+          # 表现就是子 make 报错后只留下一句兜底的
+          #   ERROR: target/linux failed to build.
+          # 而没有任何根因 —— 这正是 2026-10-06 那次失败无法定位的原因。
+          #
+          # V=w 的语义（include/verbose.mk:61）：findstring w 命中 → 不追加 2>&1
+          #   → SILENT 只剩 >/dev/null，**保留 stderr**、仅丢弃命令回显。
+          # 不敢用 V=s：全量 verbose 会把每条编译命令都打进日志，几十万行。
+          make -j2 world V=w 2>&1 | tee build.log
 
       - name: Check build status
         if: always()
@@ -206,6 +220,15 @@ jobs:
           ls -la bin/targets/ 2>/dev/null || echo "No files found in targets directory"
           echo "=== List all files in bin/ ==="
           ls -la bin/ 2>/dev/null || echo "No files found in bin directory"
+          # [custom] 2026-10-06：没有产出 .itb 就是构建失败，别让 workflow 显示成
+          # 「只有 Build Firmware 失败、其余全 success」这种误导性状态。
+          # 放在这里而不是 Report image size，因为本步在流水线中间：
+          # 后续 Collect proxy packages / Upload artifacts 都是 if: always()，
+          # 仍会照常执行，代理 .apk 和 build.log 不会丢。
+          if ! ls bin/targets/airoha/an7581/*sysupgrade.itb >/dev/null 2>&1; then
+            echo "::error::未产出 sysupgrade.itb，构建失败。根因见上面 Build Firmware 步骤（已用 V=w 保留工具 stderr）"
+            exit 1
+          fi
 
       - name: Report image size
         if: always()
