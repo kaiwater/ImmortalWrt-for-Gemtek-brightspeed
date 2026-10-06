@@ -100,7 +100,7 @@ awk -v vals="$vals" 'BEGIN {
 		split(a[i], kv, "=")
 		if (kv[1] == "" || kv[2] == "") continue
 		if (out != "") out = out " · "
-		out = out kv[1] " " sprintf("%.1f", kv[2] / 1000) "°C"
+		out = out kv[1] " 【" sprintf("%.1f", kv[2] / 1000) "°C】"
 	}
 	printf "%s", (out != "" ? out : "无温度信息")
 }'
