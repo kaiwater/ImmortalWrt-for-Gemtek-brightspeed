@@ -171,6 +171,21 @@ CPU 【60.6°C】 · lan1 【79.0°C】 · lan2 【79.0°C】 · PON 【55.0°C�
     删除 `custom/scripts/fetch-openclash-core.sh`。
     > ⚠️ 刷入新固件后，设备上残留的 `/etc/config/openclash` 与 `/etc/openclash/`
     > 不会再被加载（init 脚本已随包一起消失），但也不会自动清理 —— 想干净就手动删掉。
+- **Ruby 全家桶 + lyaml/libyaml**：**XR1710G 已移除**（12 个包，约 4.9 MiB）。
+  依据：把 6 个 feed（immortalwrt/packages + luci + openwrt/routing + telephony +
+  kenzok8/openwrt-daede + nikkinikki-org/OpenWrt-nikki）全部拉下来做 `DEPENDS` 反查，
+  **整个仓库里唯一依赖 `ruby` 的包就是 `luci-app-openclash`**
+  （它在 vernesong/OpenClash 和 `immortalwrt/luci` 两个 feed 里各有一份）。
+  OpenClash 移除后 Ruby 就没有任何依赖方了；在设备上也搜不到除 OpenClash 外的 ruby 调用方。
+  `lyaml` / `libyaml` 的唯一依赖者 `luci-app-passwall` 也不在 1710 清单里。
+  实测体积：libruby 3838 KiB、ruby-bigdecimal 541、ruby-date 147、ruby-psych 132、
+  ruby-digest 74、lyaml 53、ruby-enc 48、ruby-stringio 33、ruby-pstore 26、
+  ruby-yaml 12、ruby 4（元包）、libyaml 104。
+  > ⚠️ **以后若要往这台设备装 OpenClash，必须先把这套 Ruby 装回来**，否则它起不来。
+  > Nikki 用 mihomo 内核（Go 写的），不需要 Ruby。
+- **`gawk` / `coreutils*`：保留**（上游显式 `=y`，本仓库未动）。实测过它们同样没有依赖者，
+  但属于「脚本可能按名字直接调用」的类型：设备上实测 busybox **不提供 `nohup` 和 `base64`**，
+  且 `/usr/libexec/ssh-keygen-openssh` 会调用 `base64`，删了有运行时风险，收益（约 1.2 MiB）不值当。
 
 > 注意：`daed` 会连带编译 BPF 工具链（llvm-bpf）；本仓库通过 `CONFIG_DEVEL=y` +
 > `CONFIG_BPF_TOOLCHAIN_HOST=y` + `CONFIG_USE_LLVM_HOST=y` 改用宿主机 LLVM，
