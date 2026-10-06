@@ -4,6 +4,13 @@
 # 单独放在 custom/ 目录，是为了同步 naoki66 / ImmortalWrt 上游时不会被覆盖。
 #
 # 修改插件：直接增删下面的配置行，然后运行一次 Build XR1710G Firmware。
+#
+# 📌 2026-10-06 定稿：Lucky 在 **1710G 保留、2010G 去掉**（见
+# custom/config.fragment.2010 里对应的关闭说明）。
+# 本文件不动 —— 上游 1710.config 里这三个都是 =y，已编入镜像：
+#     CONFIG_PACKAGE_lucky=y
+#     CONFIG_PACKAGE_luci-app-lucky=y
+#     CONFIG_PACKAGE_luci-i18n-lucky-zh-cn=y
 # ============================================================
 
 # ---------- 编译进固件的插件 ----------
