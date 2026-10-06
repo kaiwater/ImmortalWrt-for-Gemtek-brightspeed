@@ -1,0 +1,25 @@
+#!/bin/sh /etc/rc.common
+#
+# XG2010G：开机后自检两个 10G 口的链路是否真的通
+#
+# 背景见 /etc/xg2010g-10g-linkcheck.sh 的注释：开机建立 10G 链路时存在竞态，
+# 双方 PHY 都报 Link Up 但数据通路可能是死的，导致接在 10G 口后面的设备集体失联。
+#
+# 放在 init.d 里而不是往 /etc/rc.local 里加一行，是为了不覆盖 base-files 自带的
+# /etc/rc.local（里面还有别的内容）。START=99 排在 done（95，rc.local 所在）之后，
+# 那时网络已经完全起来。
+#
+# 实际逻辑在 /etc/xg2010g-10g-linkcheck.sh，它自己会先 sleep 等链路稳定，
+# 所以这里直接后台拉起即可，不阻塞启动。
+
+START=99
+STOP=10
+
+start() {
+	[ -x /etc/xg2010g-10g-linkcheck.sh ] || return 0
+	/etc/xg2010g-10g-linkcheck.sh >/dev/null 2>&1 &
+}
+
+stop() {
+	:
+}
