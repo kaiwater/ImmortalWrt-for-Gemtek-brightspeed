@@ -7,7 +7,6 @@
 # ============================================================
 
 # ---------- 编译进固件的插件 ----------
-CONFIG_PACKAGE_luci-app-openclash=y
 CONFIG_PACKAGE_luci-app-argon-config=y
 CONFIG_PACKAGE_luci-i18n-argon-config-zh-cn=y
 CONFIG_PACKAGE_luci-theme-argon=y
@@ -29,8 +28,9 @@ CONFIG_PACKAGE_luci-i18n-rtp2httpd-zh-cn=y
 # 保守做法：把下面三组的 =y 改成 =m（只编译不编入），从 artifact 里取 .apk
 # 装进 overlay（实测 385 MiB 可用）。
 #
-# ⚠️ 加上原有的 OpenClash，本机将有 4 个代理工具，它们会同时争抢
+# ⚠️ 本机将有 3 个代理工具（homeproxy / Nikki / daed），它们会同时争抢
 # DNS 接管 / TPROXY / nftables 规则 / 路由表。**同一时间只应启用一个。**
+# （OpenClash 已于 2026-10-06 移除，理由见下面「不需要的插件」一节。）
 
 # homeproxy（sing-box 内核）
 CONFIG_PACKAGE_luci-app-homeproxy=y
@@ -61,6 +61,16 @@ CONFIG_PACKAGE_daed=y
 # CONFIG_PACKAGE_daed-geosite is not set
 
 # ---------- 不需要的插件（保持关闭） ----------
+
+# OpenClash（2026-10-06 移除）
+# 与 Nikki 完全重复 —— 两者用的都是 mihomo 内核，只是界面不同；同时装会争抢
+# DNS 接管 / TPROXY / nftables 规则 / 路由表。Nikki 已覆盖全部功能，只保留 Nikki。
+# 上游 1710.config 本来就是 not set，这里显式写出是为了防止上游日后改动。
+# 移除后配套删掉：custom/feeds.conf.custom 里的 openclash feed、
+# build-firmware.yml 里的 Bundle latest OpenClash core 步骤、
+# 以及 custom/scripts/fetch-openclash-core.sh。
+# CONFIG_PACKAGE_luci-app-openclash is not set
+# CONFIG_PACKAGE_luci-i18n-openclash-zh-cn is not set
 
 # dae / daed 的内核与工具链支持（2026-10-04：三个代理都启用后必须打开）
 # 依据：immortalwrt/packages 的 net/daed/Makefile 明确写着

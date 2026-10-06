@@ -1,13 +1,14 @@
 # XR1710G 额外 feed（由 build-firmware.yml 拼到 feeds.conf 最前面）
-# 放在最前面是为了让同名包优先取这里的版本（如 luci-app-openclash）。
+# 放在最前面是为了让同名包优先取这里的版本（如 dae / daed）。
 # 注意：本文件不要出现「裸 # 行」——OpenWrt 的 scripts/feeds 用 s/#.+$// 剥注释，
 # .+ 要求 # 后至少一个字符，裸 # 行会被判为 "Syntax error in feeds.conf, line N"。
-
-# OpenClash（XR1710G 原有代理，保留）
-src-git openclash https://github.com/vernesong/OpenClash.git
 
 # kenzok8/openwrt-daede：dae 内核 + daed（带 Web 面板）+ luci-app-daede 统一界面
 src-git daede https://github.com/kenzok8/openwrt-daede.git;main
 
 # nikkinikki-org/OpenWrt-nikki：nikki + mihomo 内核 + luci-app-nikki
 src-git nikki https://github.com/nikkinikki-org/OpenWrt-nikki.git;main
+
+# 注：原 openclash feed（vernesong/OpenClash）已于 2026-10-06 移除 ——
+# 与 Nikki 都用 mihomo 内核，功能完全重复，只保留 Nikki。
+

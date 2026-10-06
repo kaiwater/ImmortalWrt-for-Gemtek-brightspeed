@@ -94,7 +94,7 @@ jobs:
       - name: Install feeds
         run: |
           # [custom] 自定义 feed 放在最前面：feeds 脚本按 feeds.conf 顺序取优先级，
-          # 同名包（如 luci-app-openclash、dae/daed）优先使用自定义源里的最新版。
+          # 同名包（如 dae/daed、nikki）优先使用自定义源里的最新版。
           if [ -f custom/feeds.conf.custom ]; then
             cat custom/feeds.conf.custom > feeds.conf
             printf '\n' >> feeds.conf   # 防御：源文件末尾可能没有换行，否则会和下一行拼在一起
@@ -142,8 +142,6 @@ jobs:
           ls -l package/feeds/daede/ 2>/dev/null || echo "（没有找到 package/feeds/daede）"
           echo "== nikki feed 安装情况 =="
           ls -l package/feeds/nikki/ 2>/dev/null || echo "（没有找到 package/feeds/nikki）"
-          echo "== openclash feed 安装情况 =="
-          ls -l package/feeds/openclash/ 2>/dev/null || echo "（没有找到 package/feeds/openclash）"
 
       - name: Apply feed patches
         run: |
@@ -172,8 +170,8 @@ jobs:
           bash scripts/set-build-version.sh .config
           make defconfig
           grep -E 'CONFIG_(IMAGEOPT|EXTRA_IMAGE_NAME|VERSIONOPT|VERSION_DIST|VERSION_NUMBER|VERSION_CODE|VERSION_FILENAMES|VERSION_CODE_FILENAMES)[= ]' .config
-          echo "== 透明代理（4 个：openclash / homeproxy / nikki / daed）=="
-          grep -E 'CONFIG_PACKAGE_(luci-app-openclash|luci-app-homeproxy|luci-i18n-homeproxy-zh-cn|homeproxy|sing-box|luci-app-nikki|luci-i18n-nikki-zh-cn|nikki|mihomo-meta|yq|luci-app-daede|luci-app-daede_daed|luci-app-daede_dae|luci-app-daed|daed|v2ray-geoip|v2ray-geosite)(=| is not set)' .config | sort || true
+          echo "== 透明代理（3 个：homeproxy / nikki / daed）=="
+          grep -E 'CONFIG_PACKAGE_(luci-app-homeproxy|luci-i18n-homeproxy-zh-cn|homeproxy|sing-box|luci-app-nikki|luci-i18n-nikki-zh-cn|nikki|mihomo-meta|yq|luci-app-daede|luci-app-daede_daed|luci-app-daede_dae|luci-app-daed|daed|v2ray-geoip|v2ray-geosite)(=| is not set)' .config | sort || true
           echo "== daed 相关内核开关 =="
           grep -E 'CONFIG_KERNEL_(DEBUG_INFO_BTF|DEBUG_INFO_REDUCED|BPF_EVENTS|BPF_STREAM_PARSER|XDP_SOCKETS)' .config || true
           echo "== BPF 工具链 =="
@@ -184,13 +182,6 @@ jobs:
           # [custom] 固件文件覆盖层（首次开机后台地址 192.168.5.1 等）
           mkdir -p files
           cp -a custom/files/. files/
-
-      - name: Bundle latest OpenClash core
-        run: |
-          # [custom] 编译时把最新 mihomo 内核打进固件
-          if [ -f custom/scripts/fetch-openclash-core.sh ]; then
-            bash custom/scripts/fetch-openclash-core.sh
-          fi
 
       - name: Download sources
         run: make download -j$(nproc)
@@ -265,9 +256,7 @@ jobs:
             "bin/packages/*/*/v2ray-geosite-*.apk" \
             "bin/packages/*/*/yq-*.apk" \
             "bin/packages/*/*/kmod-dummy-*.apk" \
-            "bin/packages/*/*/kmod-netlink-diag-*.apk" \
-            "bin/packages/*/*/luci-app-openclash-*.apk" \
-            "bin/packages/*/*/luci-i18n-openclash-*.apk" ; do
+            "bin/packages/*/*/kmod-netlink-diag-*.apk" ; do
             for f in $pat; do
               [ -f "$f" ] && cp -v "$f" proxy-pkgs/
             done

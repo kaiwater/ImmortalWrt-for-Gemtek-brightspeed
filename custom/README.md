@@ -11,9 +11,8 @@
 | --- | --- | --- |
 | `config.fragment` | 插件开关（编译前追加到 `.config`） | XR1710G |
 | `config.fragment.2010` | 插件开关（只被 `build-2010.yml` 使用） | XG2010G |
-| `feeds.conf.custom` | 额外 feed（OpenClash 官方源，编译时拉取最新版） | XR1710G |
+| `feeds.conf.custom` | 额外 feed（daede、nikki） | XR1710G |
 | `feeds.conf.2010` | 额外 feed（daede、nikki） | XG2010G |
-| `scripts/fetch-openclash-core.sh` | 编译时下载最新 mihomo 内核，打包进固件 `/etc/openclash/core/clash_meta` | XR1710G |
 | `files/` | 固件文件覆盖层（首次开机后台地址 `192.168.5.1`、DHCP 下发 `192.168.5.150-249`；以及「状态 → 信道分析」页面修复） | 共享 |
 | `files-2010/` | 固件文件覆盖层（默认主题 Aurora、「系统」板块温度行显示全部温度、10G 链路开机自检） | XG2010G |
 
@@ -160,9 +159,18 @@ CPU 【60.6°C】 · lan1 【79.0°C】 · lan2 【79.0°C】 · PON 【55.0°C�
   关闭 `luci-theme-glass`、`luci-theme-argon` 与 `luci-app-argon-config`。
 - **语音**：保留运营商语音通话所需（`asterisk` + `asterisk-pjsip` + `asterisk-chan-en75xx` + ulaw/alaw + rtp + sln/wav + playtones + `airoha-voice-ctl`）；
   关闭本机电话主机功能（`app-record`/`app-stack`/`bridge-softmix`/`res-musiconhold`/`sounds` 及 gsm/a-mu/g722/pcm 格式）。
-- **OpenClash**：XG2010G 不使用（`build-2010.yml` 不引用 `feeds.conf.custom`，也不下载 mihomo 内核；
-  配置里显式 `# CONFIG_PACKAGE_luci-app-openclash is not set`）。
-  **XR1710G 的 OpenClash 配置保持原样，未做任何改动。**
+- **OpenClash**：**两台都不装**。
+  - **XG2010G**：`build-2010.yml` 不引用 `feeds.conf.custom`，配置里显式
+    `# CONFIG_PACKAGE_luci-app-openclash is not set`。
+  - **XR1710G**：2026-10-06 移除。理由是**与 Nikki 完全重复** —— 两者用的都是
+    mihomo 内核，只是界面不同；同时装会争抢 DNS 接管 / TPROXY / nftables 规则 / 路由表。
+    Nikki 已覆盖全部功能，只保留 Nikki（另有 homeproxy、daed 共 3 个代理）。
+    配套改动四处：`custom/config.fragment` 里加 `not set`、
+    `custom/feeds.conf.custom` 去掉 openclash feed、
+    `build-firmware.yml` 删掉 `Bundle latest OpenClash core` 步骤并去掉相关 .apk 收集、
+    删除 `custom/scripts/fetch-openclash-core.sh`。
+    > ⚠️ 刷入新固件后，设备上残留的 `/etc/config/openclash` 与 `/etc/openclash/`
+    > 不会再被加载（init 脚本已随包一起消失），但也不会自动清理 —— 想干净就手动删掉。
 
 > 注意：`daed` 会连带编译 BPF 工具链（llvm-bpf）；本仓库通过 `CONFIG_DEVEL=y` +
 > `CONFIG_BPF_TOOLCHAIN_HOST=y` + `CONFIG_USE_LLVM_HOST=y` 改用宿主机 LLVM，
