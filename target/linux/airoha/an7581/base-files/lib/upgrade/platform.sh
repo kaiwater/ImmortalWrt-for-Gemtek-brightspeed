@@ -56,6 +56,7 @@ platform_check_image() {
 		return $?
 		;;
 	nokia,xg-040g-md-ubi|\
+	nokia,xg-040g-tf-ubi|\
 	quantum,q1000k-ubi)
 		fit_check_image "$1"
 		return $?
@@ -78,8 +79,16 @@ platform_do_upgrade() {
 		gemtek,w1700k-ubi|\
 		gemtek,xr1710g|\
 		nokia,xg-040g-md-ubi|\
+		nokia,xg-040g-tf-ubi|\
 		quantum,q1000k-ubi)
-			fit_do_upgrade "$1"
+			case "$board" in
+				nokia,xg-040g-md-ubi|nokia,xg-040g-tf-ubi)
+					airoha_require_ubi_layout bosa ri && fit_do_upgrade "$1"
+					;;
+				*)
+					fit_do_upgrade "$1"
+					;;
+			esac
 			;;
 		*)
 			nand_do_upgrade "$1"

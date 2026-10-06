@@ -152,7 +152,8 @@ define Device/nokia_xg-040g-md-common
   UBINIZE_OPTS := -E 5
   DEVICE_PACKAGES := kmod-gpio-button-hotplug kmod-leds-gpio \
 	kmod-phy-airoha-en8811h kmod-regulator-userspace-consumer \
-	kmod-usb-ledtrig-usbport kmod-usb3
+	kmod-usb-ledtrig-usbport kmod-usb3 kmod-airoha-en7572 \
+	kmod-airoha-xpon airoha-ponctl airoha-pond
 endef
 
 define Device/nokia_xg-040g-md
@@ -188,6 +189,31 @@ define Device/nokia_xg-040g-md-ubi
   ARTIFACTS := bl31-uboot.fip preloader.bin
 endef
 TARGET_DEVICES += nokia_xg-040g-md-ubi
+
+define Device/nokia_xg-040g-tf-common
+  $(call Device/nokia_xg-040g-md-common)
+  DEVICE_MODEL := XG-040G-TF
+  DEVICE_PACKAGES += -kmod-regulator-userspace-consumer \
+    -kmod-usb-ledtrig-usbport -kmod-usb3
+endef
+
+define Device/nokia_xg-040g-tf-ubi
+  $(call Device/nokia_xg-040g-tf-common)
+  DEVICE_VARIANT := (UBI)
+  DEVICE_DTS := an7581-nokia_xg-040g-tf-ubi
+  UBOOTENV_IN_UBI := 1
+  KERNEL_IN_UBI := 1
+  KERNEL := kernel-bin | gzip
+  KERNEL_INITRAMFS := kernel-bin | lzma | \
+	fit lzma $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb with-initrd | pad-to 128k
+  KERNEL_INITRAMFS_SUFFIX := -recovery.itb
+  IMAGES := sysupgrade.itb
+  IMAGE/sysupgrade.itb := append-kernel | \
+	fit gzip $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb external-static-with-rootfs | \
+	append-metadata
+  DEVICE_PACKAGES += fitblk
+endef
+TARGET_DEVICES += nokia_xg-040g-tf-ubi
 
 define Device/gemtek_xr1710g-common
   DEVICE_VENDOR := Gemtek
@@ -260,9 +286,9 @@ define Device/gemtek_xg2010g-ubi
   KERNEL_IN_UBI := 1
   KERNEL := kernel-bin | gzip
   IMAGES := sysupgrade.itb
-  # U-Boot loads at 0x90000000 and verifies at 0x94000000. Keep the FIT
-  # within that 64 MiB gap; the dynamic UBI fit volume is recreated to size.
-  IMAGE_SIZE := 65536k
+  # The dynamic UBI fit volume is recreated to the uploaded image size.
+  # The 128 MiB package limit is independent of UBI volume placement.
+  IMAGE_SIZE := 131072k
   IMAGE/sysupgrade.itb := append-kernel | \
 	fit gzip $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb external-static-with-rootfs | \
 	append-metadata | check-size
