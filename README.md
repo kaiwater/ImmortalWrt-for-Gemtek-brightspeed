@@ -125,7 +125,7 @@ XG2010G 与 XR1710G 同属 Airoha AN7581 平台，但硬件布局和软件包集
 
 | 应用 | 来源 | 功能 |
 |------|------|------|
-| `luci-app-airoha` | 本仓库合并（NPU 状态上游 [rchen14b/luci-app-airoha-npu](https://github.com/rchen14b/luci-app-airoha-npu) + [Gilly1970/Gemtek-W1700K](https://github.com/Gilly1970/Gemtek-W1700K) FlowSense） | 合并应用（两个标签页）：SoC/NPU 状态与加速开关；FlowSense（PPE 硬件 offload、VLAN 标签/PPPoE 透传/AP 模式卸载状态与延迟检测） |
+| `luci-app-airoha-npu` | [`naoki66/luci-app-airoha`](https://github.com/naoki66/luci-app-airoha) Airoha feed | SoC/NPU 状态与加速开关 |
 | `luci-app-airoha-fancontrol` | [`naoki66/luci-app-airoha`](https://github.com/naoki66/luci-app-airoha) | 风扇速度/温度控制与曲线 |
 | `luci-app-airoha-factory` | [`naoki66/luci-app-airoha`](https://github.com/naoki66/luci-app-airoha) | 原厂序列号、MAC/BSSID 与校准信息工具 |
 | `luci-app-airoha-recovery` | [`naoki66/luci-app-airoha`](https://github.com/naoki66/luci-app-airoha) | 一键重启进入 U-Boot HTTP Recovery（一次性触发） |
@@ -268,7 +268,7 @@ bash scripts/summarize-build-errors.sh build.log
 - [naoki66/openwrt-pon-userspace](https://github.com/naoki66/openwrt-pon-userspace) - `airoha-ponctl`、`airoha-pond` 和整合 IPTV/语音页面的 LuCI ONU 用户态来源。
 
 ### LuCI 应用来源
-- [rchen14b/luci-app-airoha-npu](https://github.com/rchen14b/luci-app-airoha-npu) - Airoha NPU 状态监控（PR #4 合并中文翻译）；现已并入合并应用 luci-app-airoha
+- [naoki66/luci-app-airoha](https://github.com/naoki66/luci-app-airoha) - Airoha LuCI 应用 feed，包含 `luci-app-airoha-npu`
 - [Gilly1970/Gemtek-W1700K](https://github.com/Gilly1970/Gemtek-W1700K) - Airoha 风扇控制与 FlowSense（commit db3f1c8）
 - [sirpdboy/luci-app-lucky](https://github.com/sirpdboy/luci-app-lucky) - Lucky 多功能工具
 
