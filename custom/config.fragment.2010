@@ -43,6 +43,30 @@ CONFIG_PACKAGE_luci-i18n-ddns-go-zh-cn=y
 # CONFIG_PACKAGE_ddns-scripts-cloudflare is not set
 # CONFIG_PACKAGE_ddns-scripts-dnspod-v3 is not set
 
+# --- 2.1 Lucky：XG2010G 不使用（2026-10-06 定稿）---
+#
+# 定稿结论：**2010G 不需要 Lucky，1710G 需要 Lucky**。
+# 2010G 上只需要 DDNS，ddns-go 已经满足。实测对比（真机）：
+#     ddns-go   常驻内存 12.7 MB，空载 CPU 0.033%
+#     Lucky     常驻内存 37.0 MB，空载 CPU 0.200%
+#   → 内存约 3 倍、CPU 约 6 倍。而且 Lucky 测的是「空配置地板」，
+#     它哪怕一条规则都不配，整套模块框架（反代/证书/存储/WAF/计划任务）
+#     的开销照样在。只为了 DDNS 去扛这整套框架不划算。
+#   另外 Lucky 从 1.4.10 之后不再开源，放在主路由上不合适。
+#
+# 注意：上游 2010.config 里这三个是
+#     CONFIG_PACKAGE_lucky=m
+#     CONFIG_PACKAGE_luci-app-lucky=m
+#     CONFIG_PACKAGE_luci-i18n-lucky-zh-cn=y
+# 其中 =m 的会编译出 .apk（不进镜像但占构建时间），=y 的 i18n 会因依赖
+# 被降级成 =m。要「完全不要」，三个都必须显式写成 not set。
+#
+# 1710G 那边（custom/config.fragment）不动 —— 上游 1710.config 里三个都是 =y，
+# 已编入镜像。
+# CONFIG_PACKAGE_lucky is not set
+# CONFIG_PACKAGE_luci-app-lucky is not set
+# CONFIG_PACKAGE_luci-i18n-lucky-zh-cn is not set
+
 # ---------- ③ 透明代理：三个全部编入固件 ----------
 #
 # ⚠️⚠️ 体积警告（务必先读）⚠️⚠️

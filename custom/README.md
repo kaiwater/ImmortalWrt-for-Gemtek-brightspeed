@@ -186,6 +186,12 @@ CPU 【60.6°C】 · lan1 【79.0°C】 · lan2 【79.0°C】 · PON 【55.0°C�
 - **`gawk` / `coreutils*`：保留**（上游显式 `=y`，本仓库未动）。实测过它们同样没有依赖者，
   但属于「脚本可能按名字直接调用」的类型：设备上实测 busybox **不提供 `nohup` 和 `base64`**，
   且 `/usr/libexec/ssh-keygen-openssh` 会调用 `base64`，删了有运行时风险，收益（约 1.2 MiB）不值当。
+- **Lucky**：**2010G 不使用，1710G 使用**（2026-10-06 定稿）。
+  2010G 上只需要 DDNS，`ddns-go` 已满足 —— 真机实测 `ddns-go` 常驻内存 12.7 MB /
+  空载 CPU 0.033%，而 Lucky 是 37 MB / 0.200%（且那是空配置地板），内存 3 倍、CPU 6 倍；
+  加上 Lucky 1.4.10 之后不再开源，不适合放主路由。注意上游 `2010.config` 里
+  `lucky` / `luci-app-lucky` 是 `=m`、`luci-i18n-lucky-zh-cn` 是 `=y`，要完全去掉
+  **三个都得显式写成 `not set`**（`=m` 的仍会编译出 .apk）。1710G 那边三个都是 `=y`，不动。
 
 > 注意：`daed` 会连带编译 BPF 工具链（llvm-bpf）；本仓库通过 `CONFIG_DEVEL=y` +
 > `CONFIG_BPF_TOOLCHAIN_HOST=y` + `CONFIG_USE_LLVM_HOST=y` 改用宿主机 LLVM，
