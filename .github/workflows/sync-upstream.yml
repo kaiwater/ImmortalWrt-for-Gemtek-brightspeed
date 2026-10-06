@@ -6,24 +6,17 @@ name: Sync Upstream (naoki66)
 # 只跟随 naoki66 的树，不再直接合并 immortalwrt/immortalwrt：
 # immortalwrt 由 naoki66 负责合并，本仓库再直连上游只会制造重复合并和冲突。
 # （历史上这里同时拉 immortalwrt，冲突时靠「跳过 + 警告」兜底，实际上并没有必要。）
+#
+# 本工作流只负责同步，**不再自动触发固件构建** ——
+# 想构建时到 Actions 页手动运行 Build XR1710G Firmware / Build XG2010G Firmware。
 
 on:
   schedule:
     - cron: '0 19 */3 * *'
   workflow_dispatch:
-    inputs:
-      trigger_build:
-        description: '同步成功后是否自动触发固件构建'
-        required: true
-        default: 'true'
-        type: choice
-        options:
-          - 'true'
-          - 'false'
 
 permissions:
   contents: write
-  actions: write
 
 concurrency:
   group: xr1710g-sync
@@ -107,17 +100,6 @@ jobs:
       - name: Push to origin
         if: steps.merge.outputs.changed == 'true'
         run: git push origin HEAD:master
-
-      - name: Trigger firmware build
-        if: ${{ steps.merge.outputs.changed == 'true' && (github.event_name == 'schedule' || github.event.inputs.trigger_build != 'false') }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          if gh workflow run build-firmware.yml --repo "${{ github.repository }}" --ref master -f release_type=release; then
-            echo "已触发固件构建：Build XR1710G Firmware"
-          else
-            echo "::warning::自动触发构建失败，请手动运行 Build XR1710G Firmware"
-          fi
 
       - name: Show result
         if: always()
