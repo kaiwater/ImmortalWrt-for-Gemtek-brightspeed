@@ -8,8 +8,9 @@
 # autocore 原版只输出 CPU 一路（"CPU: 60.6°C"）。这里改成列出全部可读温度源，
 # 让概览页一眼就能看到 CPU、两个万兆 PHY 和 PON 光模块。
 #
-# 数据来源与 LuCI「温度」板块（view/status/include/15_temperatures.js）共用同一个
-# 采集器 /usr/libexec/xg2010g-temps，避免两处口径不一致。
+# 采集全部交给 /usr/libexec/xg2010g-temps（单个 awk 进程，约 3 次 fork / 0.01 s）。
+# 概览页每 5 秒轮询一次都会走这里，所以这条路径的开销必须压到最低 ——
+# 早期版本用 shell 循环逐项拼装，单次 130 次 fork / 0.22 s，把页面拖卡了。
 #
 # 说明：本文件由 custom/files-2010/ 提供。rootfs 组装阶段（include/image.mk 的
 #       prepare_rootfs）是在所有包安装完之后才覆盖 files/ 的，所以能盖掉
@@ -23,4 +24,4 @@ if [ ! -x "$HELPER" ]; then
 fi
 
 # 命令替换会去掉末尾换行，与原版 tempinfo 的 echo -n 行为保持一致
-printf '%s' "$("$HELPER" --line)"
+printf '%s' "$("$HELPER")"

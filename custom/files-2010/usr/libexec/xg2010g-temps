@@ -2,240 +2,223 @@
 #
 # XG2010G 温度采集器
 #
-# 供 LuCI 概览页的「温度」部件使用：一次调用输出全部可读温度源，JSON 格式。
-#
-# 为什么做成脚本而不是让前端逐个 fs.read：
-#   1. 一次 file.exec 拿全，省掉多次 rpcd 往返；
-#   2. SFF-8472 光模块的寄存器换算（有符号数、0.1 µW、dBm）在 shell 里做比在浏览器里做干净；
-#   3. ACL 只需要授权一条固定命令，不必给 /sys 下一堆路径开口子。
+# 默认（无参数）：输出一行紧凑文本，供 /sbin/tempinfo 用
+#                 → LuCI 概览页「系统」板块的「温度」一行
+#   --json      ：输出 JSON（sensors[] / missing），便于调试
 #
 # 覆盖三类来源：
 #   1) thermal zone   —— CPU
 #   2) hwmon          —— 万兆 PHY（RTL8261BE），靠名字反查是哪个网口
 #   3) PON 光模块 DDM —— /sys/kernel/debug/airoha-xpon-pon0/frontend
+#                        （这颗就是 BOSA 自己的温度传感器，SFF-8472 A2h 96-97 字节）
 #
-# 传感器一律按「名字」定位，不按 hwmonN 序号，因为 hwmon 序号不保证跨启动稳定。
-# 任何一路读不到就跳过，不输出半截 JSON。
+# ---------------------------------------------------------------------------
+# 为什么写成「一个 awk 进程」
+#
+# 初版用 shell 循环 + cat / readlink / basename / tr / sed 逐项拼装，
+# 单次要 fork 约 130 次、耗时 0.22 s。而 LuCI 概览页每 5 秒轮询一次就会调它一次，
+# 实测把设备的总进程创建量拉高一个量级（系统 fork 速率 80/秒，其中大半是它），
+# 页面刷新和轮询都明显变卡。对比：autocore 原版 tempinfo 只要 2 次 fork / 0.006 s。
+#
+# 现在：
+#   - glob 交给 shell 展开（不 fork），把结果作为 awk 的输入文件，靠 FILENAME 区分来源；
+#   - 兄弟文件（name / temp1_max / trip_point_*）用 awk 的 getline 在进程内读，不 fork；
+#   - 「网口 → phydev 设备名」和「hwmon → 驱动名」两张映射用**一次** ls -l 拿全。
+# 实测降到约 3 次 fork / 约 0.01 s。
+#
+# 传感器一律按「名字」定位，不按 hwmonN 序号 —— 序号不保证跨启动稳定。
+# 任何一路读不到就跳过，不输出半截结果。
+# ---------------------------------------------------------------------------
 
 set -u
 
-FE="/sys/kernel/debug/airoha-xpon-pon0/frontend"
-ITEMS=""
-LINE=""
-MISSING=""
+FE=/sys/kernel/debug/airoha-xpon-pon0/frontend
 
-# 输出模式：
-#   默认     —— JSON，供 LuCI 概览页的「温度」板块用
-#   --line   —— 单行文本，供 /sbin/tempinfo 用（「系统」板块的「温度」一行）
-MODE="json"
-case "${1:-}" in
-	--line) MODE="line" ;;
-esac
+MODE=line
+[ "${1:-}" = "--json" ] && MODE=json
 
-# 转义成 JSON 字符串字面量
-jstr() {
-	printf '"%s"' "$(printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g')"
-}
-
-# add_item <名称> <详情> <温度℃> <参考上限℃|空> <单行短名>
-add_item() {
-	_name="$1"
-	_detail="$2"
-	_temp="$3"
-	_max="${4:-}"
-	_short="${5:-$1}"
-
-	[ -n "$_name" ] && [ -n "$_temp" ] || return 0
-	[ -n "$_max" ] || _max="null"
-
-	ITEMS="${ITEMS}${ITEMS:+,}"
-	ITEMS="${ITEMS}{\"name\":$(jstr "$_name"),\"detail\":$(jstr "$_detail"),\"temp\":${_temp},\"max\":${_max}}"
-
-	LINE="${LINE}${LINE:+ · }${_short} ${_temp}°C"
-}
-
-# 毫摄氏度 -> 摄氏度，一位小数
-mc2c() {
-	awk -v v="$1" 'BEGIN { printf "%.1f", v / 1000 }'
-}
-
-# hwmon 的 name 用下划线（mt7530_0:05），sysfs 设备目录用连字符（mt7530-0:05）
-devname() {
-	printf '%s' "$1" | tr '_' '-'
-}
-
-# 反查 hwmon 对应的网口名：/sys/class/net/<if>/phydev -> .../mt7530-0:05
-port_of() {
-	_want="$1"
-	for _n in /sys/class/net/*; do
-		# 必须先判存在：busybox 的 readlink -f 对不存在的路径也会输出
-		# 规范化结果（如 /sys/devices/virtual/net/lo/phydev），只判非空会误判。
-		[ -e "$_n/phydev" ] || continue
-		_pd=$(readlink -f "$_n/phydev" 2>/dev/null) || continue
-		if [ "$(basename "$_pd")" = "$_want" ]; then
-			basename "$_n"
-			return 0
-		fi
-	done
-	return 1
-}
-
-# ---------------------------------------------------------------------------
-# 1) CPU —— thermal zone
-# ---------------------------------------------------------------------------
-for z in /sys/class/thermal/thermal_zone*; do
-	[ -r "$z/temp" ] || continue
-
-	raw=$(cat "$z/temp" 2>/dev/null) || continue
-	case "$raw" in ''|*[!0-9-]*) continue ;; esac
-
-	zt=$(cat "$z/type" 2>/dev/null)
-	case "$zt" in
-		cpu*) label="CPU" ;;
-		'')   label="CPU" ;;
-		*)    label="$zt" ;;
-	esac
-
-	# 参考上限取第一个 trip point（本机是 hot trip 95 ℃）
-	lim=""
-	for tp in "$z"/trip_point_*_temp; do
-		[ -r "$tp" ] || continue
-		lim=$(mc2c "$(cat "$tp" 2>/dev/null)")
-		break
-	done
-
-	ncpu=$(grep -c '^processor' /proc/cpuinfo 2>/dev/null)
-	freq=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq 2>/dev/null)
-	gov=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null)
-
-	detail="${ncpu} 核"
-	[ -n "$freq" ] && detail="$detail · $((freq / 1000)) MHz"
-	[ -n "$gov" ] && detail="$detail · $gov"
-
-	add_item "$label" "$detail" "$(mc2c "$raw")" "$lim" "CPU"
+# 只把真实存在的文件交给 awk，避免 glob 不匹配时把字面量当成文件名
+FILES=""
+for f in /sys/class/thermal/thermal_zone*/temp /sys/class/hwmon/hwmon*/temp1_input; do
+	[ -r "$f" ] && FILES="$FILES $f"
 done
 
-# ---------------------------------------------------------------------------
-# 2) PHY —— hwmon（本机是两个万兆 RTL8261BE；2.5G 的 EN8811H 不暴露温度）
-# ---------------------------------------------------------------------------
-for h in /sys/class/hwmon/hwmon*; do
-	[ -r "$h/temp1_input" ] || continue
+# 一次拿全两张映射（phydev / driver 都是软链，ls -l 会打出目标路径）
+LINKS=$(ls -l /sys/class/net/*/phydev /sys/class/hwmon/hwmon*/device/driver 2>/dev/null)
 
-	hname=$(cat "$h/name" 2>/dev/null)
-	[ -n "$hname" ] || continue
-
-	raw=$(cat "$h/temp1_input" 2>/dev/null) || continue
-	case "$raw" in ''|*[!0-9-]*) continue ;; esac
-
-	hdev=$(devname "$hname")
-
-	port=$(port_of "$hdev") || port=""
-
-	drv=$(readlink -f "$h/device/driver" 2>/dev/null)
-	model=""
-	[ -n "$drv" ] && model=$(basename "$drv")
-	[ -n "$model" ] || model="$hname"
-
-	lim=""
-	[ -r "$h/temp1_max" ] && lim=$(mc2c "$(cat "$h/temp1_max" 2>/dev/null)")
-
-	spd=$(cat "/sys/class/net/$port/speed" 2>/dev/null)
-	case "$spd" in
-		1000)  spd="1G" ;;
-		2500)  spd="2.5G" ;;
-		5000)  spd="5G" ;;
-		10000) spd="10G" ;;
-		*)     spd="" ;;
-	esac
-
-	if [ -n "$port" ]; then
-		label="PHY $port"
-		short="$port"
-	else
-		label="PHY $hname"
-		short="$hname"
-	fi
-
-	detail="$model"
-	[ -n "$spd" ] && detail="$detail · 已协商 $spd"
-
-	add_item "$label" "$detail" "$(mc2c "$raw")" "$lim" "$short"
-done
-
-# ---------------------------------------------------------------------------
-# 3) PON 光模块 —— SFF-8472 DDM
-# ---------------------------------------------------------------------------
-
-# 读一个寄存器，转成十进制；读不到或格式异常输出空
-ddm() {
-	_r=$(sed -n "s/^$1: *//p" "$FE" 2>/dev/null | head -n 1)
-	case "$_r" in
-		0x[0-9a-fA-F]*) printf '%s' "$((_r))" ;;
-		'')              printf '' ;;
-		*)               printf '%s' "$_r" ;;
-	esac
+awk -v mode="$MODE" -v fe="$FE" -v links="$LINKS" '
+# 读一个文件的第一行；读不到返回空串
+function rf(p,   l) {
+	if ((getline l < p) > 0) { close(p); return l }
+	close(p)
+	return ""
 }
 
-# SFF-8472 光功率 -> dBm。寄存器单位 0.1 µW，即 0.0001 mW
-dbm() {
-	[ -n "$1" ] || return 0
-	[ "$1" -gt 0 ] 2>/dev/null || return 0
-	awk -v v="$1" 'BEGIN { printf "%+.2f", 10 * log(v * 0.0001) / log(10) }'
+function jesc(s) {
+	gsub(/\\/, "\\\\", s)
+	gsub(/"/, "\\\"", s)
+	return s
 }
 
-if [ -r "$FE" ]; then
-	t_raw=$(ddm temperature_8472)
-	case "$t_raw" in ''|*[!0-9-]*) t_raw="" ;; esac
+# 带符号 dBm（不依赖 awk 的 %+ 标志）
+function dbfmt(v) {
+	return (v >= 0 ? "+" : "") sprintf("%.2f", v)
+}
 
-	if [ -n "$t_raw" ]; then
+function degc(milli) {
+	return sprintf("%.1f", milli / 1000)
+}
+
+# emit <名称> <详情> <温度> <参考上限|空> <单行短名>
+function emit(name, detail, temp, max, short,   lim) {
+	if (name == "" || temp == "") return
+
+	lim = (max == "") ? "null" : max
+
+	if (items != "") items = items ","
+	items = items "{\"name\":\"" jesc(name) "\",\"detail\":\"" jesc(detail) \
+	        "\",\"temp\":" temp ",\"max\":" lim "}"
+
+	if (line != "") line = line " · "
+	line = line short " " temp "°C"
+}
+
+# 从 frontend 的一行里取十六进制寄存器值
+# （busybox awk 没有 strtonum，但 $1+0 认 0x 前缀）
+function hexval(l) {
+	sub(/^[^:]*:/, "", l)
+	gsub(/[[:space:]]/, "", l)
+	return l + 0
+}
+
+BEGIN {
+	# ---- 一次解析两张映射 ----
+	#   /sys/class/net/lan1/phydev            -> .../mt7530-0:05
+	#   /sys/class/hwmon/hwmon0/device/driver -> .../drivers/RTL8261BE 10Gbps PHY
+	n = split(links, ln, "\n")
+	for (i = 1; i <= n; i++) {
+		if (ln[i] !~ /->/) continue
+
+		src = ln[i]; sub(/[ \t]+->.*$/, "", src)
+		dst = ln[i]; sub(/^.*-> /, "", dst)
+
+		if (src ~ /\/phydev$/) {
+			p = src; sub(/^.*\/sys\/class\/net\//, "", p); sub(/\/phydev$/, "", p)
+			t = dst; sub(/^.*\//, "", t)
+			port[t] = p      # mt7530-0:05 -> lan1
+			iface[p] = t     # lan1 -> mt7530-0:05
+		}
+		else if (src ~ /\/device\/driver$/) {
+			h = src; sub(/^.*\/hwmon/, "", h); sub(/\/device\/driver$/, "", h)
+			t = dst; sub(/^.*\//, "", t)
+			drv[h] = t       # 0 -> RTL8261BE 10Gbps PHY
+		}
+	}
+
+	# ---- CPU 概要 ----
+	while ((getline l < "/proc/cpuinfo") > 0)
+		if (l ~ /^processor/) ncpu++
+	close("/proc/cpuinfo")
+
+	freq = rf("/sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq")
+	gov  = rf("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor")
+
+	# ---- PON 光模块 DDM：先取值，输出放到最后，保证顺序是 CPU → PHY → PON ----
+	have_pon = 0
+	while ((getline l < fe) > 0) {
+		if (l ~ /^temperature_8472:/)      { t_raw = hexval(l); have_pon = 1 }
+		else if (l ~ /^rx_power_8472:/)    { rx_raw = hexval(l) }
+		else if (l ~ /^tx_power_8472:/)    { tx_raw = hexval(l) }
+	}
+	close(fe)
+}
+
+FNR == 1 {
+	f = FILENAME
+	dir = f; sub(/\/[^\/]+$/, "", dir)
+	base = f; sub(/^.*\//, "", base)
+
+	# ---- 1) CPU：thermal zone ----
+	if (base == "temp") {
+		zt = rf(dir "/type")
+		label = (zt == "" || zt ~ /^cpu/) ? "CPU" : zt
+
+		lim = ""
+		tr = rf(dir "/trip_point_0_temp")
+		if (tr != "") lim = degc(tr)
+
+		detail = ncpu " 核"
+		if (freq != "") detail = detail " · " int(freq / 1000) " MHz"
+		if (gov != "")  detail = detail " · " gov
+
+		emit(label, detail, degc($0 + 0), lim, "CPU")
+		next
+	}
+
+	# ---- 2) PHY：hwmon ----
+	if (base == "temp1_input") {
+		hname = rf(dir "/name")
+		if (hname == "") next
+
+		hdev = hname; gsub(/_/, "-", hdev)   # hwmon name 用下划线，sysfs 目录用连字符
+
+		p = port[hdev]
+		if (p != "") seen[p] = 1
+
+		hn = dir; sub(/^.*\/hwmon/, "", hn)  # hwmon0 -> 0
+		model = drv[hn]
+		if (model == "") model = hname
+
+		lim = ""
+		mx = rf(dir "/temp1_max")
+		if (mx != "") lim = degc(mx)
+
+		spd = rf("/sys/class/net/" p "/speed")
+		spd = (spd == "1000")  ? "1G"   : \
+		      (spd == "2500")  ? "2.5G" : \
+		      (spd == "5000")  ? "5G"   : \
+		      (spd == "10000") ? "10G"  : ""
+
+		detail = model
+		if (spd != "") detail = detail " · 已协商 " spd
+
+		emit((p != "") ? "PHY " p : "PHY " hname,
+		     detail, degc($0 + 0), lim,
+		     (p != "") ? p : hname)
+		next
+	}
+}
+
+END {
+	# ---- 3) PON 光模块 ----
+	if (have_pon) {
 		# 温度是「有符号 16 位 / 256」
-		[ "$t_raw" -gt 32767 ] && t_raw=$((t_raw - 65536))
+		if (t_raw > 32767) t_raw -= 65536
 
-		rx=$(dbm "$(ddm rx_power_8472)")
-		tx=$(dbm "$(ddm tx_power_8472)")
+		rx = (rx_raw > 0) ? dbfmt(10 * log(rx_raw * 0.0001) / log(10)) : ""
+		tx = (tx_raw > 0) ? dbfmt(10 * log(tx_raw * 0.0001) / log(10)) : ""
 
-		detail=""
-		[ -n "$rx" ] && detail="收光 $rx dBm"
-		if [ -n "$tx" ]; then
-			[ -n "$detail" ] && detail="$detail · "
-			detail="${detail}发光 $tx dBm"
-		fi
+		detail = ""
+		if (rx != "") detail = "收光 " rx " dBm"
+		if (tx != "") detail = detail (detail != "" ? " · " : "") "发光 " tx " dBm"
 
 		# 参考上限取商用级 SFP 的 70 ℃ 外壳上限
-		add_item "PON 光模块" "$detail" "$(mc2c "$((t_raw * 1000 / 256))")" "70" "PON"
-	fi
-fi
+		emit("PON 光模块", detail, sprintf("%.1f", t_raw / 256), "70", "PON")
+	}
 
-# ---------------------------------------------------------------------------
-# 有 PHY 但没有温度传感器的端口，作为提示信息一并返回。
-# 只看真的有 phydev 的网口，桥 / pppoe / pon 这些虚拟接口不参与。
-# ---------------------------------------------------------------------------
-for n in /sys/class/net/*; do
-	[ -e "$n/phydev" ] || continue
-	pd=$(readlink -f "$n/phydev" 2>/dev/null) || continue
+	# ---- 有 PHY 但没有温度传感器的网口 ----
+	missing = ""
+	for (p in iface)
+		if (!(p in seen))
+			missing = missing (missing != "" ? ", " : "") p
 
-	found=0
-	for h in /sys/class/hwmon/hwmon*; do
-		[ -r "$h/temp1_input" ] || continue
-		if [ "$(devname "$(cat "$h/name" 2>/dev/null)")" = "$(basename "$pd")" ]; then
-			found=1
-			break
-		fi
-	done
-	[ "$found" = 1 ] && continue
-
-	MISSING="${MISSING}${MISSING:+, }$(basename "$n")"
-done
-
-# ---------------------------------------------------------------------------
-# 输出
-# ---------------------------------------------------------------------------
-if [ "$MODE" = "line" ]; then
-	# 「系统」板块的「温度」一行。调用方（/sbin/tempinfo）会自己去掉末尾换行。
-	[ -n "$LINE" ] || LINE="无温度信息"
-	printf '%s\n' "$LINE"
-else
-	printf '{"sensors":[%s]' "$ITEMS"
-	[ -n "$MISSING" ] && printf ',"missing":%s' "$(jstr "$MISSING")"
-	printf '}\n'
-fi
+	if (mode == "json") {
+		printf "{\"sensors\":[%s]", items
+		if (missing != "") printf ",\"missing\":\"%s\"", jesc(missing)
+		printf "}\n"
+	}
+	else {
+		printf "%s\n", (line != "" ? line : "无温度信息")
+	}
+}
+' $FILES
