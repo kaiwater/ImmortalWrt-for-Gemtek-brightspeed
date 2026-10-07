@@ -29,12 +29,19 @@
 # ---------------------------------------------------------------------------
 # 用法
 #
-# 由 init.d 后台拉起，常驻循环：先做一次初始化，之后每 INTERVAL 秒续约一次。
-# 手动跑一次可用： XG2010G_IPTV_ONCE=1 /etc/xg2010g-iptv-uplink.sh
+# 【当前状态：默认不启用】
+# 这个脚本是为「让机顶盒走光猫 NAT 访问 IPTV 专网」而写的。2026-10-07 决定
+# 暂时放弃机顶盒那条线（只保留内网设备通过 rtp2httpd 看直播，那套不需要本脚本），
+# 因此把它从 /etc/init.d 移到了 /usr/bin —— 需要时手动跑，不再开机自动执行。
+#
+# 手动跑一轮：   XG2010G_IPTV_ONCE=1 /usr/bin/xg2010g-iptv-uplink.sh
+# 常驻循环：     /usr/bin/xg2010g-iptv-uplink.sh &
+# 若要恢复开机自启：在 /etc/init.d 下加一个 rc.common 包装（START=21，在 iptv 之后）
 #
 # 环境变量：
 #   XG2010G_IPTV_RENEW_INTERVAL  续约间隔秒数，默认 1200（租期 1800）
 #   XG2010G_IPTV_ONCE            非空则只做一轮就退出（排障用）
+#   XG2010G_IPTV_ROUTES          需要经 IPTV 接口的网段，默认 210.13.0.0/16
 
 set -u
 
