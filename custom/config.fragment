@@ -11,6 +11,15 @@
 #     CONFIG_PACKAGE_lucky=y
 #     CONFIG_PACKAGE_luci-app-lucky=y
 #     CONFIG_PACKAGE_luci-i18n-lucky-zh-cn=y
+#
+# 📌 2026-10-08：修复 FIT 打包找不到 DTB（run #28 失败原因）。
+# 失败现象：mkimage 去引用 image--xr1710g.dtb / image--xr1710g-ubi.dtb，
+# 而实际生成的是 image-an7581-xr1710g.dtb / image-an7581-gemtek-xr1710g-ubi.dtb。
+# 原因：XR1710G 的 image 规则定义在 Device/gemtek_xr1710g-common 内，而
+# DEVICE_DTS 在设备块调用该 common 之后才赋值，规则展开时退回默认公式
+# （an7581 前缀为空）。修复见 target/linux/airoha/image/an7581.mk：
+# 调用 common 时显式传入 DTS 名，并把 DEVICE_DTS/SOC 提到规则之前。
+# 本次提交同时触发一次 XR1710G 重新构建。
 # ============================================================
 
 # ---------- 编译进固件的插件 ----------
