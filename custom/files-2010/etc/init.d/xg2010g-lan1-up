@@ -1,0 +1,32 @@
+#!/bin/sh /etc/rc.common
+#
+# XG2010G：开机后 5 分钟窗口内确保 lan1 真正可用
+#
+# 背景见 /etc/xg2010g-lan1-up.sh 的注释：10G 链路存在「PHY 报 up 但数据通路是
+# 死的」这种竞态，2026-10-06 就因此让 lan1 后面的设备集体失联了 1 小时 50 分。
+#
+# 放在 init.d 而不是往 /etc/rc.local 里加一行，是为了不覆盖 base-files 自带的
+# /etc/rc.local（里面还有别的内容）。START=99 排在 done（95，rc.local 所在）之后，
+# 那时网络已经完全起来。
+#
+# 脚本自己会在窗口内反复检查并重新协商，最多跑 5 分钟然后退出，
+# 所以直接后台拉起即可，不阻塞启动，也不需要 procd 托管。
+
+START=99
+STOP=10
+
+PIDFILE=/var/lock/xg2010g-lan1-up.pid
+
+start() {
+	[ -x /etc/xg2010g-lan1-up.sh ] || return 0
+	/etc/xg2010g-lan1-up.sh >/dev/null 2>&1 &
+}
+
+stop() {
+	# 脚本自己会退出（最多 5 分钟），但手动 stop 时应该立刻停掉它。
+	# 脚本内的等待是 1 秒粒度的，所以 TERM 后最多 1 秒就退出。
+	[ -f "$PIDFILE" ] || return 0
+	pid="$(cat "$PIDFILE" 2>/dev/null)"
+	[ -n "$pid" ] && kill "$pid" 2>/dev/null
+	return 0
+}
