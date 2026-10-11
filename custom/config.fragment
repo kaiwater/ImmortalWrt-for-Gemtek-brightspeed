@@ -33,34 +33,37 @@ CONFIG_PACKAGE_rtp2httpd=y
 CONFIG_PACKAGE_luci-app-rtp2httpd=y
 CONFIG_PACKAGE_luci-i18n-rtp2httpd-zh-cn=y
 
-# ---------- 透明代理：homeproxy / Nikki / daed 三个全部编入（2026-10-04 新增） ----------
+# ---------- 透明代理：XR1710G 只采用 daed ----------
 #
-# ⚠️⚠️ 体积风险（务必先读）⚠️⚠️
-# XR1710G 的设备定义里**没有 IMAGE_SIZE**，所以构建时不会有 check-size 拦截，
-# 超限不会报错——但也不代表刷进去能启动。历史构建产物最大只到 77.30 MiB。
-# 本次新增的三个代理 .apk 合计约 66 MiB，按实测 squashfs 压缩比 0.80 折算
-# 约 +53 MiB → 镜像预计到 120+ MiB，**这个体积从未在真机上验证过**。
-# 若刷入后 U-Boot 无法加载 FIT，设备会起不来，只能靠串口/TFTP 恢复。
-# 保守做法：把下面三组的 =y 改成 =m（只编译不编入），从 artifact 里取 .apk
-# 装进 overlay（实测 385 MiB 可用）。
+# 📌 2026-10-11 定稿：代理插件只留 daed，homeproxy 与 Nikki 完全移除。
+#   与 XG2010G 保持一致（见 custom/config.fragment.2010 的 ③ 段）。
 #
-# ⚠️ 本机将有 3 个代理工具（homeproxy / Nikki / daed），它们会同时争抢
-# DNS 接管 / TPROXY / nftables 规则 / 路由表。**同一时间只应启用一个。**
-# （OpenClash 已于 2026-10-06 移除，理由见下面「不需要的插件」一节。）
+#   历史沿革：
+#   · 2026-10-04：三个代理（homeproxy / Nikki / daed）全部编入，镜像涨到
+#     100.89 MiB。⚠️ XR1710G 的设备定义里**没有 IMAGE_SIZE**，构建时不会
+#     有 check-size 拦截、超限不报错 —— 但也不代表刷进去能启动。
+#     历史构建产物最大只到 77.30 MiB，100.89 MiB 从未在真机上验证过。
+#   · 2026-10-11：用户定稿**只采用 daed**，homeproxy 与 Nikki 改成 not set。
+#     镜像预计回落约 28.9 MiB（原 100.89 MiB → 约 72 MiB）。
+#
+#   用 not set 而不是 =m：=m 仍会编译出 .apk（占构建时间与 artifact 体积）。
+#   若要恢复其中某一个：把对应几行的 not set 改成 =y 即可。但注意多个代理
+#   会同时争抢 DNS 接管 / TPROXY / nftables 规则 / 路由表，
+#   **同一时间只应启用一个**。
 
-# homeproxy（sing-box 内核）
-CONFIG_PACKAGE_luci-app-homeproxy=y
-CONFIG_PACKAGE_luci-i18n-homeproxy-zh-cn=y
-CONFIG_PACKAGE_homeproxy=y
-CONFIG_PACKAGE_sing-box=y
+# homeproxy（sing-box 内核）—— XR1710G 不使用
+# CONFIG_PACKAGE_luci-app-homeproxy is not set
+# CONFIG_PACKAGE_luci-i18n-homeproxy-zh-cn is not set
+# CONFIG_PACKAGE_homeproxy is not set
+# CONFIG_PACKAGE_sing-box is not set
 
-# Nikki（mihomo 内核）
-CONFIG_PACKAGE_luci-app-nikki=y
-CONFIG_PACKAGE_luci-i18n-nikki-zh-cn=y
-CONFIG_PACKAGE_nikki=y
-CONFIG_PACKAGE_mihomo-meta=y
-# Nikki 依赖 yq，显式打开，避免被解析成 m 而不进镜像
-CONFIG_PACKAGE_yq=y
+# Nikki（mihomo 内核）—— XR1710G 不使用
+# CONFIG_PACKAGE_luci-app-nikki is not set
+# CONFIG_PACKAGE_luci-i18n-nikki-zh-cn is not set
+# CONFIG_PACKAGE_nikki is not set
+# CONFIG_PACKAGE_mihomo-meta is not set
+# yq 原本是 Nikki 的依赖（显式打开以免被解析成 m），Nikki 移除后不再需要
+# CONFIG_PACKAGE_yq is not set
 
 # daed（kenzok8/openwrt-daede，eBPF 内核）
 CONFIG_PACKAGE_luci-app-daede=y
