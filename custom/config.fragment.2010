@@ -5,11 +5,19 @@
 #
 # 本文件只影响 XG2010G 构建；XR1710G 用的是 custom/config.fragment。
 #
-# 2026-10-04 变更：
-#   ① IPTV：msd_lite → rtp2httpd（补上时移/回看与 FCC 快速换台）
-#   ② 透明代理：homeproxy / Nikki / daed 三个全部编入固件
-#   ③ 主题：glass → Aurora
-#   ④ 移除 OpenClash 残留
+# 📌 2026-10-11 定稿摘要（当前生效的选择）：
+#   ① IPTV：只用 rtp2httpd（msd_lite / udpxy 已关）
+#   ② DDNS：只用 ddns-go（ddns-scripts 全套已关）
+#   ③ 透明代理：**只采用 daed**（OpenClash / homeproxy / Nikki 全部移除）
+#   ④ 主题：Aurora
+#   ⑤ Lucky：不使用（ddns-go 已够，且 Lucky 1.4.10 后不再开源）
+#   ⑥ 语音：保留运营商通话，去掉本机电话主机/PBX 功能
+#   ⑦ 不含任何 =m 中间态 —— 要么编入镜像、要么完全不编译
+#
+# 历史沿革：
+#   2026-10-04 首版：rtp2httpd 取代 msd_lite；三个代理全编入；主题改 Aurora
+#   2026-10-06：移除 OpenClash；移除 Ruby 全家桶 + lyaml/libyaml；移除 lucky
+#   2026-10-11：代理收敛为只留 daed；移除 XG2010G 2 GiB 变体（本机是 1 GiB 版）
 # ============================================================
 
 # ---------- ① IPTV：改用 rtp2httpd ----------
