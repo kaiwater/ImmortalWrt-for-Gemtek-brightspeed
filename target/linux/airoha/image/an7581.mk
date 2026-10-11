@@ -305,14 +305,15 @@ define Device/gemtek_xg2010g-ubi
 endef
 TARGET_DEVICES += gemtek_xg2010g-ubi
 
-define Device/gemtek_xg2010g-2g-ubi
-  DEVICE_DTS := an7581-gemtek-xg2010g-2g-ubi
-  $(call Device/gemtek_xg2010g-common)
-  DEVICE_MODEL := XG2010G (2 GiB)
-  DEVICE_VARIANT := UBI
-  SUPPORTED_DEVICES := gemtek,xg2010g-2g-ubi gemtek,xg2010g-2g
-endef
-TARGET_DEVICES += gemtek_xg2010g-2g-ubi
+# [custom] 2026-10-11：移除 XG2010G 2 GiB 变体（原 gemtek_xg2010g-2g-ubi）。
+# 本仓库的 XG2010G 是 1 GiB 内存版，2 GiB 的 device profile 与 2010-2g.config
+# 都不需要，故从 TARGET_DEVICES 移除 —— 这样它不会出现在 profiles.json /
+# menuconfig 里，也不可能被构建。共享块 Device/gemtek_xg2010g-common 保留，
+# 1 GiB 版仍调用它。
+# 注：其它文件里针对 2g 板名的 case 分支（02_network / 03_pon_data /
+# platform.sh / 01_leds / uboot-envtools 等）**刻意保留不动** —— 那些分支
+# 只对 2g 板名生效，对 1 GiB 版完全惰性；删掉只会制造无谓的上游分歧，
+# 让以后同步更容易冲突。
 
 define Device/quantum_q1000k-ubi
   DEVICE_VENDOR := Quantum Fiber
