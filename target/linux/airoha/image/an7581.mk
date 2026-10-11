@@ -110,7 +110,7 @@ define Device/gemtek_w1700k-ubi
        the end of flash. A reinstall including corrected chainloader is needed.
   DEVICE_PACKAGES := airoha-en7581-mt7996-npu-firmware airoha-an7581-mt7996-board fitblk \
 		    kmod-hwmon-nct7802 kmod-mt7996-firmware wpad-openssl \
-		    rtl826x-firmware
+		    rtl826x-firmware rtl8261c-firmware
   UBINIZE_OPTS := -E 5
   BLOCKSIZE := 128k
   PAGESIZE := 2048
@@ -216,7 +216,6 @@ endef
 TARGET_DEVICES += nokia_xg-040g-tf-ubi
 
 define Device/gemtek_xr1710g-common
-  SOC := an7581
   DEVICE_VENDOR := Gemtek
   DEVICE_MODEL := XR1710G
   DEVICE_PACKAGES := airoha-en7581-mt7996-npu-firmware airoha-an7581-mt7996-board \
@@ -231,19 +230,19 @@ define Device/gemtek_xr1710g-common
   UBOOTENV_IN_UBI := 1
   KERNEL_IN_UBI := 1
   KERNEL := kernel-bin | gzip
-  # FIT/DTS 名通过参数传入，不依赖 DEVICE_DTS 的求值时机。
-  # 之前 image 规则在设备块赋值 DEVICE_DTS 之前展开，会退回默认公式
-  # an7581 前缀为空，生成的 FIT 去引用 image--xr1710g.dtb 而失败。
   KERNEL_INITRAMFS := kernel-bin | lzma | \
-	fit lzma $$(KDIR)/image-$(1).dtb with-initrd | pad-to 128k
+	fit lzma $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb with-initrd | pad-to 128k
   KERNEL_INITRAMFS_SUFFIX := -recovery.itb
   IMAGES := sysupgrade.itb
-  IMAGE/sysupgrade.itb := append-kernel | fit gzip $$(KDIR)/image-$(1).dtb external-static-with-rootfs | append-metadata
+  IMAGE/sysupgrade.itb := append-kernel | fit gzip $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb external-static-with-rootfs | append-metadata
+  SOC := an7581
 endef
 
 define Device/gemtek_xr1710g
+  # DEVICE_DTS must be set before the common block: the common IMAGE/KERNEL
+  # lines use := and freeze $(firstword $(DEVICE_DTS)) at eval time.
   DEVICE_DTS := an7581-xr1710g
-  $(call Device/gemtek_xr1710g-common,an7581-xr1710g)
+  $(call Device/gemtek_xr1710g-common)
   DEVICE_ALT0_VENDOR := Brightspeed
   DEVICE_ALT0_MODEL := XR1710G
   SUPPORTED_DEVICES := gemtek,xr1710g
@@ -252,7 +251,7 @@ TARGET_DEVICES += gemtek_xr1710g
 
 define Device/gemtek_xr1710g-ubi
   DEVICE_DTS := an7581-gemtek-xr1710g-ubi
-  $(call Device/gemtek_xr1710g-common,an7581-gemtek-xr1710g-ubi)
+  $(call Device/gemtek_xr1710g-common)
   DEVICE_MODEL := XR1710G (OpenWrt U-Boot UBI layout)
   DEVICE_ALT0_VENDOR := Brightspeed
   DEVICE_ALT0_MODEL := XR1710G (OpenWrt U-Boot UBI layout)
@@ -265,11 +264,8 @@ define Device/gemtek_xr1710g-ubi
 endef
 TARGET_DEVICES += gemtek_xr1710g-ubi
 
-define Device/gemtek_xg2010g-ubi
+define Device/gemtek_xg2010g-common
   DEVICE_VENDOR := Gemtek
-  DEVICE_MODEL := XG2010G
-  DEVICE_VARIANT := UBI
-  DEVICE_DTS := an7581-gemtek-xg2010g-ubi
   DEVICE_COMPAT_VERSION := 2.0
   DEVICE_COMPAT_MESSAGE := Firmware requires the XG2010G OpenWrt U-Boot UBI layout \
        with bl2 at 0x00000000 and ubi starting at 0x00020000, containing \
@@ -295,10 +291,28 @@ define Device/gemtek_xg2010g-ubi
   IMAGE/sysupgrade.itb := append-kernel | \
 	fit gzip $$(KDIR)/image-$$(firstword $$(DEVICE_DTS)).dtb external-static-with-rootfs | \
 	append-metadata | check-size
-  SUPPORTED_DEVICES := gemtek,xg2010g-ubi gemtek,xg2010g
   SOC := an7581
 endef
+
+define Device/gemtek_xg2010g-ubi
+  # DEVICE_DTS must be set before the common block: the common IMAGE line
+  # uses := and freezes $(firstword $(DEVICE_DTS)) at eval time.
+  DEVICE_DTS := an7581-gemtek-xg2010g-ubi
+  $(call Device/gemtek_xg2010g-common)
+  DEVICE_MODEL := XG2010G
+  DEVICE_VARIANT := UBI
+  SUPPORTED_DEVICES := gemtek,xg2010g-ubi gemtek,xg2010g
+endef
 TARGET_DEVICES += gemtek_xg2010g-ubi
+
+define Device/gemtek_xg2010g-2g-ubi
+  DEVICE_DTS := an7581-gemtek-xg2010g-2g-ubi
+  $(call Device/gemtek_xg2010g-common)
+  DEVICE_MODEL := XG2010G (2 GiB)
+  DEVICE_VARIANT := UBI
+  SUPPORTED_DEVICES := gemtek,xg2010g-2g-ubi gemtek,xg2010g-2g
+endef
+TARGET_DEVICES += gemtek_xg2010g-2g-ubi
 
 define Device/quantum_q1000k-ubi
   DEVICE_VENDOR := Quantum Fiber
