@@ -5,11 +5,19 @@
 #
 # 本文件只影响 XG2010G 构建；XR1710G 用的是 custom/config.fragment。
 #
-# 2026-10-04 变更：
-#   ① IPTV：msd_lite → rtp2httpd（补上时移/回看与 FCC 快速换台）
-#   ② 透明代理：homeproxy / Nikki / daed 三个全部编入固件
-#   ③ 主题：glass → Aurora
-#   ④ 移除 OpenClash 残留
+# 📌 2026-10-11 定稿摘要（当前生效的选择）：
+#   ① IPTV：只用 rtp2httpd（msd_lite / udpxy 已关）
+#   ② DDNS：只用 ddns-go（ddns-scripts 全套已关）
+#   ③ 透明代理：**只采用 daed**（OpenClash / homeproxy / Nikki 全部移除）
+#   ④ 主题：Aurora
+#   ⑤ Lucky：不使用（ddns-go 已够，且 Lucky 1.4.10 后不再开源）
+#   ⑥ 语音：保留运营商通话，去掉本机电话主机/PBX 功能
+#   ⑦ 不含任何 =m 中间态 —— 要么编入镜像、要么完全不编译
+#
+# 历史沿革：
+#   2026-10-04 首版：rtp2httpd 取代 msd_lite；三个代理全编入；主题改 Aurora
+#   2026-10-06：移除 OpenClash；移除 Ruby 全家桶 + lyaml/libyaml；移除 lucky
+#   2026-10-11：代理收敛为只留 daed；移除 XG2010G 2 GiB 变体（本机是 1 GiB 版）
 # ============================================================
 
 # ---------- ① IPTV：改用 rtp2httpd ----------
@@ -67,42 +75,45 @@ CONFIG_PACKAGE_luci-i18n-ddns-go-zh-cn=y
 # CONFIG_PACKAGE_luci-app-lucky is not set
 # CONFIG_PACKAGE_luci-i18n-lucky-zh-cn is not set
 
-# ---------- ③ 透明代理：daed / homeproxy / Nikki 三个全部编入固件 ----------
+# ---------- ③ 透明代理：XG2010G 只采用 daed ----------
 #
-# 📌 2026-10-06 变更：homeproxy 与 Nikki 由 =m 改回 =y，三个全部编入。
+# 📌 2026-10-11 定稿：代理插件只留 daed，homeproxy 与 Nikki 完全移除。
+#   （用户明确：2010G 的代理插件只需要采用 daed。）
 #
-#   为什么之前是 =m：2026-10-04 时镜像上限是 IMAGE_SIZE := 65536k（64 MiB，
-#   来自 U-Boot 0x90000000/0x94000000 双缓冲间隙，硬约束）。实测三个全 =y
-#   会到 77.86 MiB（81646644 > 67108864），超限 13.86 MiB，且 check-size 会
-#   **静默删掉 ITB**、构建还显示成功 —— 所以当时把这两个降成 =m，只留 daed。
+#   历史沿革（记下来避免以后误改回去）：
+#   · 2026-10-04：镜像上限 64 MiB（U-Boot 0x90000000/0x94000000 双缓冲间隙，
+#     硬约束）。实测三个全 =y 会到 77.86 MiB（81646644 > 67108864），超限
+#     13.86 MiB，且 check-size 会**静默删掉 ITB**、构建仍显示成功。
+#     故把 homeproxy / Nikki 降成 =m，只留 daed。
+#   · 2026-10-06：上游 e46600c9cc 把 XG2010G 的 IMAGE_SIZE 提到 128 MiB，
+#     限制解除，于是把这两个改回 =y（实测镜像 77.87 MiB，构建成功）。
+#   · 2026-10-11：用户定稿**只采用 daed**，这两个改成 not set。
 #
-#   为什么现在可以改回 =y：上游 e46600c9cc 把 XG2010G 的 IMAGE_SIZE 提到
-#   **131072k（128 MiB）**，本仓库已合并（见 target/linux/airoha/image/an7581.mk
-#   的 Device/gemtek_xg2010g-ubi）。当前实际镜像 48.87 MiB / 308 包，按之前
-#   实测的 squashfs 压缩比 0.80 折算，三个全编入约 +28.9 MiB → **约 78 MiB**，
-#   在 128 MiB 上限内还剩约 50 MiB 余量。
+#   为什么用 not set 而不是 =m：
+#     =m 仍会编译出 .apk（占构建时间与 artifact 体积）。10-04 时保留 =m 的
+#     目的是"三个方案都能在设备上跑起来做 PPE 对比测试"；该测试已结束，
+#     不再需要这些 .apk，所以直接 not set（连编译都不做）。
 #
-# ⚠️ 风险：128 MiB 这个体积**从未在真机上验证过**（历史产物最大只到 77.30 MiB）。
-#   本次构建就是这次验证。若刷入后 U-Boot 无法加载 FIT，设备会起不来，
-#   只能靠串口 / TFTP 恢复。刷之前确认手边有救砖手段。
+#   体积影响：镜像从 77.87 MiB 回落到约 48.9 MiB。
 #
-#   回退办法：把下面 3.1 / 3.2 段改回 =m，只保留 daed =y（镜像回到 ~48.9 MiB）。
-#
-# ⚠️ 另一个必须注意的点：三个透明代理会同时争抢 DNS 接管、TPROXY/nftables
-# 规则与路由表。**同一时间只应启用一个**（其余 disable），否则行为不可预期。
+#   若以后要恢复其中某一个：把对应几行的 not set 改成 =y 即可（128 MiB 上限内
+#   余量充裕）。但注意透明代理会同时争抢 DNS 接管、TPROXY/nftables 规则与
+#   路由表，**同一时间只应启用一个**。
 
-# --- 3.1 homeproxy（sing-box 内核）---
-CONFIG_PACKAGE_luci-app-homeproxy=y
-CONFIG_PACKAGE_luci-i18n-homeproxy-zh-cn=y
-CONFIG_PACKAGE_homeproxy=y
-CONFIG_PACKAGE_sing-box=y
+# --- 3.1 homeproxy（sing-box 内核）—— XG2010G 不使用 ---
+# CONFIG_PACKAGE_luci-app-homeproxy is not set
+# CONFIG_PACKAGE_luci-i18n-homeproxy-zh-cn is not set
+# CONFIG_PACKAGE_homeproxy is not set
+# CONFIG_PACKAGE_sing-box is not set
 
-# --- 3.2 Nikki（mihomo 内核）---
-CONFIG_PACKAGE_luci-app-nikki=y
-CONFIG_PACKAGE_luci-i18n-nikki-zh-cn=y
-CONFIG_PACKAGE_nikki=y
-CONFIG_PACKAGE_mihomo-meta=y
-# Nikki 的依赖（显式写出便于核对；缺 kmod-dummy 会导致 nikki 被丢弃）
+# --- 3.2 Nikki（mihomo 内核）—— XG2010G 不使用 ---
+# CONFIG_PACKAGE_luci-app-nikki is not set
+# CONFIG_PACKAGE_luci-i18n-nikki-zh-cn is not set
+# CONFIG_PACKAGE_nikki is not set
+# CONFIG_PACKAGE_mihomo-meta is not set
+# 代理相关的通用内核支持（原本是为 Nikki/homeproxy 显式列出的）。
+# 2026-10-11 起两者已 not set，这几项保留：它们是通用网络能力，
+# 体积极小（合计几十 KB），且 daed 若需要某些项也会由 DEPENDS 自动拉入。
 CONFIG_PACKAGE_kmod-dummy=y
 CONFIG_PACKAGE_kmod-inet-diag=y
 CONFIG_PACKAGE_kmod-nft-socket=y

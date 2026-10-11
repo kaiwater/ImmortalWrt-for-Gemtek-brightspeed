@@ -119,6 +119,23 @@ jobs:
             exit 1
           fi
           echo "  feeds.conf 预检通过"
+
+          # ── 剔除上游引入的不可用 feed：pushbot ──
+          # feeds.conf.default 里有：
+          #   src-git pushbot https://github.com/zzsj0928/luci-app-pushbot.git
+          # （上游提交 ea5416bb26「新增推送机器人应用源」引入）
+          # 但该仓库是**单个 LuCI 应用的包仓库**，根 Makefile 是包 Makefile
+          # （PKG_NAME:=luci-app-pushbot + include $(TOPDIR)/rules.mk），
+          # **不是 feed 索引 Makefile**。scripts/feeds 把它当索引解析时报：
+          #   feeds/pushbot.tmp/info/.files-packageinfo.mk:1: *** target pattern contains no '%'.  Stop.
+          # 导致整个 Install feeds 失败（构建在 1 分多钟就挂掉）。
+          # 本仓库不需要该应用（推送用 luci-app-wechatpush，且已关闭），直接剔除。
+          if grep -q '^src-git pushbot ' feeds.conf; then
+            grep -v '^src-git pushbot ' feeds.conf > feeds.conf.tmp
+            mv feeds.conf.tmp feeds.conf
+            echo "  已剔除不可用的 pushbot feed"
+          fi
+
           ./scripts/feeds update -a
           ./scripts/feeds install -a
           bash scripts/fix-stale-golang-host.sh
