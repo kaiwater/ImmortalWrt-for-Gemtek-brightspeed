@@ -1,6 +1,6 @@
 src-git packages https://github.com/immortalwrt/packages.git
 src-git luci https://github.com/immortalwrt/luci.git
-src-git --directory=luci-theme-glass glass https://github.com/rchen14b/luci-theme-glass.git;main
+#src-git --directory=luci-theme-glass glass https://github.com/rchen14b/luci-theme-glass.git;main
 src-git routing https://github.com/openwrt/routing.git
 src-git telephony https://github.com/openwrt/telephony.git
 #src-git video https://github.com/openwrt/video.git
@@ -14,4 +14,4 @@ src-git easytier https://github.com/EasyTier/luci-app-easytier.git;main
 src-git openwrt_bandix https://github.com/timsaya/openwrt-bandix.git;main
 src-git luci_app_bandix https://github.com/timsaya/luci-app-bandix.git;main
 src-git helloworld https://github.com/fw876/helloworld.git;dev
-src-git pushbot https://github.com/zzsj0928/luci-app-pushbot.git
+src-git --directory=luci-app-pushbot pushbot https://github.com/naoki66/luci-app-pushbot.git
