@@ -2,7 +2,7 @@ name: Build XG2010G Firmware
 # 与 build-firmware.yml（XR1710G）相互独立：
 #   - 种子配置用 2010.config，定制开关用 custom/config.fragment.2010
 #   - 产物名 / Release tag / Release 标题都带 XG2010G，避免与 1710 撞车
-#   - 不使用 OpenClash feed 与 mihomo 内核（代理走 homeproxy / Nikki / daed）
+#   - 不使用 OpenClash feed 与 mihomo 内核（代理只走 daed）
 # 定制文件：custom/config.fragment.2010、custom/feeds.conf.2010、custom/files-2010/
 
 on:
@@ -98,7 +98,7 @@ jobs:
 
       - name: Install feeds
         run: |
-          # 2010 专用 feed（kenzok8/openwrt-daede、OpenWrt-nikki）放在最前面，
+          # 2010 专用 feed（kenzok8/openwrt-daede）放在最前面，
           # 保证同名包优先取它的版本
           if [ -f custom/feeds.conf.2010 ]; then
             cat custom/feeds.conf.2010 > feeds.conf
@@ -163,9 +163,6 @@ jobs:
           echo "移除数量: $removed"
           echo "== daede feed 安装情况 =="
           ls -l package/feeds/daede/ 2>/dev/null || echo "（没有找到 package/feeds/daede）"
-          echo "== nikki feed 安装情况 =="
-          ls -l package/feeds/nikki/ 2>/dev/null || echo "（没有找到 package/feeds/nikki）"
-
       - name: Apply feed patches
         run: |
           if [ -f scripts/apply-feed-patches.sh ]; then
@@ -250,7 +247,7 @@ jobs:
           itb="$(ls bin/targets/airoha/an7581/*sysupgrade.itb 2>/dev/null | head -1)"
           if [ -z "$itb" ]; then
             echo "::error::没有生成 sysupgrade.itb —— 极可能是超出 IMAGE_SIZE(64 MiB) 被 check-size 删除。"
-            echo "  处理：把 custom/config.fragment.2010 里 homeproxy / Nikki 两组从 =y 改为 =m 后重编。"
+            echo "  处理：把 custom/config.fragment.2010 里 homeproxy 一组从 =y 改为 =m 后重编。"
             exit 1
           fi
           size=$(stat -c %s "$itb")
@@ -286,19 +283,19 @@ jobs:
             if grep -q "^$p " "$manifest"; then echo "  [OK]  $p"; else echo "  [!!]  $p 不在镜像里"; fi
           done
           echo "== 应当缺席的包（出现说明没关掉）=="
-          echo "   注：homeproxy/sing-box/Nikki/mihomo 因 64 MiB 体积上限改为只编译不编入，"
-          echo "       它们应在 artifact xg2010g-proxy-packages 里，不应出现在 manifest。"
+          echo "   注：homeproxy/sing-box 因 64 MiB 体积上限改为只编译不编入，应在 artifact"
+          echo "       xg2010g-proxy-packages 里；Nikki/mihomo 已连 feed 移除，不会再产出。"
           if grep -E '^(msd_lite|luci-app-msd_lite|luci-i18n-msd_lite-zh-cn|udpxy|luci-app-udpxy|luci-theme-glass|luci-theme-argon|luci-app-argon-config|luci-app-openclash|luci-i18n-openclash-zh-cn|luci-app-daed|luci-i18n-daed-zh-cn|daed-geoip|daed-geosite|pbr|luci-app-pbr|ddns-scripts|ddns-scripts-services|luci-app-ddns|luci-app-passwall.*|homeproxy|luci-app-homeproxy|luci-i18n-homeproxy-zh-cn|sing-box|nikki|luci-app-nikki|luci-i18n-nikki-zh-cn|mihomo|mihomo-meta|mihomo-alpha) ' "$manifest"; then
             echo "::warning::上面这些包仍在镜像里，检查 config.fragment.2010"
           else
             echo "  （无，符合预期）"
           fi
           echo "== 代理相关包（用于 overlay 后装）是否已产出 .apk =="
-          for pat in mihomo-meta nikki luci-app-nikki sing-box homeproxy luci-app-homeproxy daed luci-app-daede yq; do
+          for pat in sing-box homeproxy luci-app-homeproxy daed luci-app-daede yq; do
             n=$(find bin/packages -name "$pat-*.apk" 2>/dev/null | wc -l)
             if [ "$n" -gt 0 ]; then echo "  [OK]  $pat  ($n 个 .apk)"; else echo "  [!!]  $pat 没有产出 .apk"; fi
           done
-          echo "== 体积预算（64 MiB 上限）=="
+          echo "== 体积预算（128 MiB 上限，上游 e46600c9cc 已提高）=="
           itb="$(ls bin/targets/airoha/an7581/*sysupgrade.itb 2>/dev/null | head -1)"
           if [ -n "$itb" ]; then
             echo "  ITB: $(stat -c %s "$itb") B = $(awk -v s="$(stat -c %s "$itb")" 'BEGIN{printf "%.2f", s/1048576}') MiB"
@@ -311,20 +308,14 @@ jobs:
       - name: Collect proxy packages (for overlay install)
         if: always()
         run: |
-          # 无论三个代理是 =y 还是 =m，都把编出来的 .apk 收集起来单独上传：
-          # 若镜像因体积超限失败，或后续想改成 =m，可以拷到设备装进 overlay。
+          # 把编出来的代理 .apk 收集起来单独上传：若镜像因体积超限失败，
+          # 或后续想改成 =m，可以拷到设备装进 overlay。
           #
-          # 注意：这里必须包含「只被代理依赖」的包 —— 因为当 nikki=m 时，
-          # OpenWrt 会把只被它依赖的 yq 也解析成 m，于是 yq 不进镜像；
-          # 而单独安装 nikki 时 apk 会因缺 yq 而拒绝安装。所以 yq 必须一起收集。
+          # 注意：这里必须包含「只被代理依赖」的包（如 yq），否则单独安装会缺依赖。
           mkdir -p proxy-pkgs
           shopt -s nullglob
           for pat in \
-            "bin/packages/*/*/mihomo-meta-*.apk" \
-            "bin/packages/*/*/mihomo-alpha-*.apk" \
-            "bin/packages/*/*/nikki-*.apk" \
-            "bin/packages/*/*/luci-app-nikki-*.apk" \
-            "bin/packages/*/*/luci-i18n-nikki-*.apk" \
+
             "bin/packages/*/*/sing-box-*.apk" \
             "bin/packages/*/*/homeproxy-*.apk" \
             "bin/packages/*/*/luci-app-homeproxy-*.apk" \
@@ -347,8 +338,6 @@ jobs:
           du -sh proxy-pkgs/ 2>/dev/null || true
           echo
           echo "== 安装清单（拷到设备后按序执行）=="
-          echo "  # Nikki（mihomo 内核）"
-          echo "  apk add --allow-untrusted ./yq-*.apk ./mihomo-meta-*.apk ./nikki-*.apk ./luci-app-nikki-*.apk ./luci-i18n-nikki-*.apk"
           echo "  # homeproxy（sing-box 内核）"
           echo "  apk add --allow-untrusted ./sing-box-*.apk ./luci-app-homeproxy-*.apk ./luci-i18n-homeproxy-*.apk"
 
@@ -391,9 +380,9 @@ jobs:
             echo "XG2010G（Gemtek XG2010G / Airoha AN7581）专属构建："
             echo "- IPTV：rtp2httpd（组播转单播 + RTSP 时移回看 + FCC 快速换台）"
             echo "- DDNS：ddns-go"
-            echo "- 透明代理：daed 已编入固件；homeproxy(sing-box) 与 Nikki(mihomo) 因 64 MiB"
-            echo "  镜像上限改为只编译不编入，.apk 在 artifact xg2010g-proxy-packages 里，"
-            echo "  可 apk add --allow-untrusted 装进 overlay。**同一时间只应启用一个。**"
+            echo "- 透明代理：只采用 daed（已编入固件）。homeproxy(sing-box) 因 64 MiB 镜像上限"
+            echo "  改为只编译不编入，.apk 在 artifact xg2010g-proxy-packages 里，可 apk add 装进 overlay。"
+            echo "  Nikki 及其 mihomo 内核已于 2026-10-11 连同 feed 一并移除。"
             echo "- 主题：Aurora"
             echo "- 语音：保留运营商语音通话（Asterisk + asterisk-chan-en75xx），去掉本机电话主机功能"
             echo "- OpenClash：不使用，已移除全部残留"

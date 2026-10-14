@@ -3,18 +3,24 @@
 本仓库是 `naoki66/ImmortalWrt-for-Gemtek-brightspeed` 的 fork，所有“个性化修改”都放在这个目录，
 上游（naoki66 + immortalwrt）更新时不会被覆盖。
 
-**两条构建线相互独立**：`custom/config.fragment` 与 `custom/files/` 服务于 XR1710G；
+**两条构建线相互独立**：`custom/config.fragment` 与 `custom/feeds.conf.custom` 服务于 XR1710G；
 `custom/config.fragment.2010`、`custom/feeds.conf.2010`、`custom/files-2010/` 只服务于 XG2010G。
-改 XG2010G 的东西时，请只动 `.2010` 后缀的文件与 `build-2010.yml`，不要碰共享文件。
+
+`custom/files/` 稍特殊：它是 **XR1710G 的定制层**，但 `build-2010.yml` 也会复制它
+（XG2010G 先铺这一层，再被 `custom/files-2010/` 覆盖）。所以：
+
+- **给 XR1710G 做定制** → 写进 `custom/files/`，**不要**写进 `files-2010/`（后者 1710 看不到）。
+- **只给 XG2010G 做定制** → 写进 `custom/files-2010/`；若写进 `custom/files/`，
+  两台都会拿到（除非在 `files-2010/` 里放同名文件覆盖掉）。
 
 | 文件 | 作用 | 归属 |
 | --- | --- | --- |
 | `config.fragment` | 插件开关（编译前追加到 `.config`） | XR1710G |
 | `config.fragment.2010` | 插件开关（只被 `build-2010.yml` 使用） | XG2010G |
-| `feeds.conf.custom` | 额外 feed（daede、nikki） | XR1710G |
-| `feeds.conf.2010` | 额外 feed（daede、nikki） | XG2010G |
-| `files/` | 固件文件覆盖层（首次开机后台地址 `192.168.5.1`、DHCP 下发 `192.168.5.150-249`；以及「状态 → 信道分析」页面修复） | 共享 |
-| `files-2010/` | 固件文件覆盖层（默认主题 Aurora、「系统」板块温度行显示全部温度、10G 链路开机自检） | XG2010G |
+| `feeds.conf.custom` | 额外 feed（仅 daede；nikki 已于 2026-10-11 移除） | XR1710G |
+| `feeds.conf.2010` | 额外 feed（仅 daede；nikki 已于 2026-10-11 移除） | XG2010G |
+| `files/` | XR1710G 定制层（首次开机后台地址 `192.168.5.1`、DHCP 下发 `192.168.5.150-249`、「状态 → 信道分析」页面修复、apk 源固定为官方） | XR1710G（2010 也会铺这层） |
+| `files-2010/` | XG2010G 覆盖层（默认主题 Aurora、「系统」板块温度行显示全部温度、10G 链路开机自检、apk 源固定为官方） | XG2010G |
 
 ## 常用操作
 
@@ -71,8 +77,9 @@
 | 文件 | 作用 |
 | --- | --- |
 | `custom/config.fragment.2010` | XG2010G 的插件开关（只影响 2010 构建） |
-| `custom/feeds.conf.2010` | XG2010G 专用 feed（daede、nikki） |
+| `custom/feeds.conf.2010` | XG2010G 专用 feed（仅 daede） |
 | `custom/files-2010/etc/uci-defaults/99-theme-aurora.sh` | 首次开机把默认界面设为 Aurora |
+| `custom/files-2010/etc/uci-defaults/99-apk-mirror-official.sh` | 首次开机把 apk 源固定为官方 `downloads.immortalwrt.org`，见下 |
 | `custom/files-2010/sbin/tempinfo` | 覆盖 autocore 原版：概览页「系统」板块的「温度」一行显示全部温度（CPU / lan1 / lan2 / PON） |
 | `custom/files-2010/etc/xg2010g-10g-linkcheck.sh` | 开机自检两个 10G 口，见下 |
 | `custom/files-2010/etc/init.d/xg2010g-10g-linkcheck` | 上面脚本的开机启动项（`START=99`，排在 rc.local 之后） |
@@ -112,6 +119,70 @@ CPU 【60.6°C】 · lan1 【79.0°C】 · lan2 【79.0°C】 · PON 【55.0°C�
 正常端口哪怕空闲也会有广播包，`rx_bytes` 不会是 0，所以不会误伤。
 并发锁用 PID 文件（不用 `mkdir` 锁 —— 后者被 SIGKILL 后 trap 不执行会残留死锁、永远挡住检查）。
 
+### apk 源固定为官方（`files*/etc/uci-defaults/99-apk-mirror-official.sh`）
+
+**现象**：设备上 `apk update` 每次刷屏 10 条 `ERROR: wget: exited with error 8`
+与 `unexpected end of file`，涉及 `app_airoha`、`daede`、`easytier`、`glass`、
+`helloworld`、`luci_app_bandix`、`nikki`、`onu_config`、`openwrt_bandix`、`pon_drivers`。
+
+**根因**：上游 `package/emortal/default-settings/files/99-default-settings-chinese` 会做
+
+```sh
+apk_mirror="$(uci -q get system.@imm_init[0].apk_mirror)"
+[ -z "$apk_mirror" ] && apk_mirror="https://mirrors.vsean.net/openwrt"
+uci -q set system.@imm_init[0].apk_mirror="$apk_mirror"
+sed -i.bak "s,https://downloads.immortalwrt.org,$apk_mirror,g" /etc/apk/repositories.d/distfeeds.list
+```
+
+两个问题：
+
+1. **硬编码第三方镜像**。`mirrors.vsean.net` 只是 302 跳到 `mirrors.pku.edu.cn`，
+   等于让路由器依赖一个我们不掌握的中转主机。
+2. **主机名替换是无差别的**。`distfeeds.list` 由 `include/feeds.mk` 的
+   `FeedSourcesAppendAPK` 生成 —— 它对 `FEEDS_AVAILABLE` 里**每个** feed 都输出一行，
+   只判断 `CONFIG_FEED_<name>` 是否非空，**不区分该 feed 有没有二进制包输出**。
+   而我们的自定义 feed 全是 `src-git` **源码源**，包在构建期编入镜像，
+   任何服务器上都没有它们的 `packages.adb` → 替换后必然 404。
+
+实测证据（设备端 busybox wget，看退出码与字节数）：
+
+```
+base luci packages routing telephony   rc=0  有数据   -> OK
+上述 10 个自定义 feed                   rc=8  0 字节   -> HTTP 4xx/5xx（404）
+```
+
+跟随重定向可见 `luci` 得到 200、`daede` 得到 404；换回 `downloads.immortalwrt.org`
+结果相同 —— 证明这些条目本身就不该存在，而不是镜像选错。
+
+**修法**：新增 `uci-defaults` 脚本把 `apk_mirror` 固定为 `https://downloads.immortalwrt.org`。
+文件名用 `99-`，是因为 `/etc/uci-defaults` 按文件名排序 source，
+这样能排在上游的 `99-default-settings-chinese` **之后**，覆盖它写入的默认值。
+两台各一份（`files/` 给 XR1710G，`files-2010/` 给 XG2010G），逻辑相同、互相兼容。
+
+**效果**：`apk update` 由「10 条 ERROR + 10 条 warning」变为
+`OK: 10626 distinct packages available`，零 ERROR / 零 WARNING。
+
+**只对之后新刷的固件生效** —— `/etc/uci-defaults` 仅在刷机后首次启动执行一次。
+已刷好的设备可手工修：
+
+```sh
+uci set system.@imm_init[0].apk_mirror='https://downloads.immortalwrt.org'
+uci commit system
+cd /etc/apk/repositories.d
+for f in app_airoha daede easytier glass helloworld luci_app_bandix \
+         nikki onu_config openwrt_bandix pon_drivers; do
+  sed -i "\|/packages/aarch64_cortex-a53/$f/packages.adb|d" distfeeds.list
+done
+sed -i 's,https://mirrors.vsean.net/openwrt,https://downloads.immortalwrt.org,g' distfeeds.list
+apk update
+```
+
+**未修的遗留项**：那 10 条死 feed 条目仍由 `include/feeds.mk` 在构建时生成
+（上游文件，改了会与上游同步冲突）。要彻底消除需给 `feeds.mk` 加补丁
+（仓库已有 `patches/feeds/` + `scripts/apply-feed-patches.sh` 机制），
+或给这些 feed 在 `2010.config` / `1710.config` 里显式置 `=m`（`feeds.mk` 会把 `=m` 的行注释掉）。
+截至目前设备端已手工清理，构建侧留待下次处理。
+
 ### 插件取舍（2026-10-06 修订）
 
 > **读 `config.fragment*` 时不要过滤 `#` 行。**
@@ -141,7 +212,7 @@ CPU 【60.6°C】 · lan1 【79.0°C】 · lan2 【79.0°C】 · PON 【55.0°C�
 - **透明代理**：
   - `daed`（eBPF，来自 `kenzok8/openwrt-daede` feed 的 `luci-app-daede` + `daed`；
     旧界面 `luci-app-daed` 不装）**已编入固件**（`=y`）。
-  - `homeproxy`（sing-box）与 `Nikki`（mihomo）**只编译不编入**（`=m`）。
+  - `homeproxy`（sing-box）**只编译不编入**（`=m`）。
     `.apk` 在 artifact `xg2010g-proxy-packages` 里，拷到设备后
     `apk add --allow-untrusted` 装进 overlay 即可。
   - ⚠️ 三者会争抢 DNS 接管、TPROXY/nftables 规则与路由表，**同一时间只应启用一个**。

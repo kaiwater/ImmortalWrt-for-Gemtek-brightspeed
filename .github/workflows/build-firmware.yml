@@ -94,7 +94,7 @@ jobs:
       - name: Install feeds
         run: |
           # [custom] 自定义 feed 放在最前面：feeds 脚本按 feeds.conf 顺序取优先级，
-          # 同名包（如 dae/daed、nikki）优先使用自定义源里的最新版。
+          # 同名包（如 dae/daed）优先使用自定义源里的最新版。
           if [ -f custom/feeds.conf.custom ]; then
             cat custom/feeds.conf.custom > feeds.conf
             printf '\n' >> feeds.conf   # 防御：源文件末尾可能没有换行，否则会和下一行拼在一起
@@ -157,9 +157,6 @@ jobs:
           echo "移除数量: $removed"
           echo "== daede feed 安装情况 =="
           ls -l package/feeds/daede/ 2>/dev/null || echo "（没有找到 package/feeds/daede）"
-          echo "== nikki feed 安装情况 =="
-          ls -l package/feeds/nikki/ 2>/dev/null || echo "（没有找到 package/feeds/nikki）"
-
       - name: Apply feed patches
         run: |
           # [custom] 上游脚本在旧树里可能还不存在，存在才执行
@@ -187,7 +184,7 @@ jobs:
           bash scripts/set-build-version.sh .config
           make defconfig
           grep -E 'CONFIG_(IMAGEOPT|EXTRA_IMAGE_NAME|VERSIONOPT|VERSION_DIST|VERSION_NUMBER|VERSION_CODE|VERSION_FILENAMES|VERSION_CODE_FILENAMES)[= ]' .config
-          echo "== 透明代理（3 个：homeproxy / nikki / daed）=="
+          echo "== 透明代理（只保留 daed）=="
           grep -E 'CONFIG_PACKAGE_(luci-app-homeproxy|luci-i18n-homeproxy-zh-cn|homeproxy|sing-box|luci-app-nikki|luci-i18n-nikki-zh-cn|nikki|mihomo-meta|yq|luci-app-daede|luci-app-daede_daed|luci-app-daede_dae|luci-app-daed|daed|v2ray-geoip|v2ray-geosite)(=| is not set)' .config | sort || true
           echo "== daed 相关内核开关 =="
           grep -E 'CONFIG_KERNEL_(DEBUG_INFO_BTF|DEBUG_INFO_REDUCED|BPF_EVENTS|BPF_STREAM_PARSER|XDP_SOCKETS)' .config || true
@@ -279,11 +276,7 @@ jobs:
           mkdir -p proxy-pkgs
           shopt -s nullglob
           for pat in \
-            "bin/packages/*/*/mihomo-meta-*.apk" \
-            "bin/packages/*/*/mihomo-alpha-*.apk" \
-            "bin/packages/*/*/nikki-*.apk" \
-            "bin/packages/*/*/luci-app-nikki-*.apk" \
-            "bin/packages/*/*/luci-i18n-nikki-*.apk" \
+
             "bin/packages/*/*/sing-box-*.apk" \
             "bin/packages/*/*/homeproxy-*.apk" \
             "bin/packages/*/*/luci-app-homeproxy-*.apk" \

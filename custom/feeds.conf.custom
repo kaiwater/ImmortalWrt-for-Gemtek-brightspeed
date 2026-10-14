@@ -6,9 +6,9 @@
 # kenzok8/openwrt-daede：dae 内核 + daed（带 Web 面板）+ luci-app-daede 统一界面
 src-git daede https://github.com/kenzok8/openwrt-daede.git;main
 
-# nikkinikki-org/OpenWrt-nikki：nikki + mihomo 内核 + luci-app-nikki
-src-git nikki https://github.com/nikkinikki-org/OpenWrt-nikki.git;main
-
-# 注：原 openclash feed（vernesong/OpenClash）已于 2026-10-06 移除 ——
-# 与 Nikki 都用 mihomo 内核，功能完全重复，只保留 Nikki。
-
+# 注：本机代理插件最终只保留 daed，以下两个 feed 均已移除。
+# 移除 openclash feed（vernesong/OpenClash）：2026-10-06。
+# 移除 nikki feed（nikkinikki-org/OpenWrt-nikki）：2026-10-11 —— 它同时提供
+# nikki、luci-app-nikki 与 mihomo 内核（mihomo-meta）；既然确定不再使用 Nikki，
+# 保留这个 feed 只会让它继续出现在设备的 distfeeds.list 里、每次 apk update 报一条 404。
+# 该 feed 的包在 custom/config.fragment 里早已是 not set，移除 feed 不改变镜像内容。

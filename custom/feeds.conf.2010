@@ -10,10 +10,12 @@
 # "Add Aurora theme package" 步骤（它的 Makefile 在仓库根目录，
 # 必须克隆到 package/luci-theme-aurora 才能得到正确的包名）。
 
-# 1) kenzok8/openwrt-daede：dae 内核 + daed（带 Web 面板）+ luci-app-daede 统一界面
+# kenzok8/openwrt-daede：dae 内核 + daed（带 Web 面板）+ luci-app-daede 统一界面
 src-git daede https://github.com/kenzok8/openwrt-daede.git;main
 
-# 2) nikkinikki-org/OpenWrt-nikki：nikki + mihomo 内核 + luci-app-nikki
-# 该仓库只有 main / dependabot-* 分支，不要用它的 feed.sh
-# （脚本会把发行版 SNAPSHOT 映射到不存在的 SNAPSHOT 分支而失败）
-src-git nikki https://github.com/nikkinikki-org/OpenWrt-nikki.git;main
+# 注：nikki feed（nikkinikki-org/OpenWrt-nikki）已于 2026-10-11 移除。
+# 它同时提供 nikki、luci-app-nikki 与 mihomo 内核（mihomo-meta）；既然确定不再
+# 使用 Nikki，保留这个 feed 只会让它继续出现在设备的 distfeeds.list 里、
+# 每次 apk update 报一条 404（任何镜像上都没有它的二进制索引）。
+# 该 feed 的包在 custom/config.fragment.2010 里早已是 not set，移除不改变镜像内容。
+# 它的仓库只有 main / dependabot-* 分支，不能用其 feed.sh —— 现在一并作废。
