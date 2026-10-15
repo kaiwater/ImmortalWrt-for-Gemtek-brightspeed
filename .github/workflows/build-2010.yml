@@ -242,25 +242,29 @@ jobs:
       - name: Report image size
         if: always()
         run: |
-          # IMAGE_SIZE := 65536k（64 MiB）来自 U-Boot 0x90000000/0x94000000 双缓冲间隙，
-          # 是硬约束。超限时 check-size 会直接删掉 ITB，构建仍"成功"。
+          # IMAGE_SIZE := 131072k（128 MiB）—— 上游 e46600c9cc 已从 64 MiB 提高。
+          # 超限时 check-size 会直接删掉 ITB，构建仍"成功"，所以这里要显式核对。
+          #
+          # ⚠️ 2026-10-15 修复：原 limit 写作 65536（按字节解释只有 64 KiB），
+          #    告警阈值写作 62914（62914560/1000），两者都是旧的 64 MiB 口径且单位错位，
+          #    导致日志打出「占用: 78532.9%  余量: -49.02 MiB」并每次都误报超限。
           itb="$(ls bin/targets/airoha/an7581/*sysupgrade.itb 2>/dev/null | head -1)"
           if [ -z "$itb" ]; then
-            echo "::error::没有生成 sysupgrade.itb —— 极可能是超出 IMAGE_SIZE(64 MiB) 被 check-size 删除。"
-            echo "  处理：把 custom/config.fragment.2010 里 homeproxy 一组从 =y 改为 =m 后重编。"
+            echo "::error::没有生成 sysupgrade.itb —— 极可能是超出 IMAGE_SIZE(128 MiB) 被 check-size 删除。"
+            echo "  处理：精简 custom/config.fragment.2010 里编入镜像的包后重编。"
             exit 1
           fi
           size=$(stat -c %s "$itb")
           mib=$(awk -v s="$size" 'BEGIN{printf "%.2f", s/1048576}')
-          limit=65536
+          limit=134217728   # 128 MiB，单位：字节（与 IMAGE_SIZE 一致）
           echo "ITB: $itb"
-          echo "大小: ${mib} MiB / 上限 64.00 MiB"
+          echo "大小: ${mib} MiB / 上限 128.00 MiB"
           awk -v s="$size" -v l="$limit" 'BEGIN{
             pct = s/l*100;
             printf "占用: %.1f%%  余量: %.2f MiB\n", pct, (l-s)/1048576;
           }'
-          if [ "$size" -gt 62914 ]; then
-            echo "::warning::镜像已超过 60 MiB，余量不足 4 MiB，后续再加包会超限。"
+          if [ "$size" -gt 125829120 ]; then   # 120 MiB
+            echo "::warning::镜像已超过 120 MiB，余量不足 8 MiB，后续再加包会超限。"
           fi
 
       - name: Verify firmware content
@@ -283,15 +287,17 @@ jobs:
             if grep -q "^$p " "$manifest"; then echo "  [OK]  $p"; else echo "  [!!]  $p 不在镜像里"; fi
           done
           echo "== 应当缺席的包（出现说明没关掉）=="
-          echo "   注：homeproxy/sing-box 因 64 MiB 体积上限改为只编译不编入，应在 artifact"
-          echo "       xg2010g-proxy-packages 里；Nikki/mihomo 已连 feed 移除，不会再产出。"
+          echo "   注：homeproxy / sing-box / nikki / mihomo 已于 2026-10-11 从 config.fragment.2010"
+          echo "       彻底移除（not set），既不编入镜像也不产出 .apk；OpenClash 已于 2026-10-06 移除。"
           if grep -E '^(msd_lite|luci-app-msd_lite|luci-i18n-msd_lite-zh-cn|udpxy|luci-app-udpxy|luci-theme-glass|luci-theme-argon|luci-app-argon-config|luci-app-openclash|luci-i18n-openclash-zh-cn|luci-app-daed|luci-i18n-daed-zh-cn|daed-geoip|daed-geosite|pbr|luci-app-pbr|ddns-scripts|ddns-scripts-services|luci-app-ddns|luci-app-passwall.*|homeproxy|luci-app-homeproxy|luci-i18n-homeproxy-zh-cn|sing-box|nikki|luci-app-nikki|luci-i18n-nikki-zh-cn|mihomo|mihomo-meta|mihomo-alpha) ' "$manifest"; then
             echo "::warning::上面这些包仍在镜像里，检查 config.fragment.2010"
           else
             echo "  （无，符合预期）"
           fi
           echo "== 代理相关包（用于 overlay 后装）是否已产出 .apk =="
-          for pat in sing-box homeproxy luci-app-homeproxy daed luci-app-daede yq; do
+          # 2026-10-15：原列表含 sing-box/homeproxy/luci-app-homeproxy/yq，这些包现在
+          # 根本不编译，每次构建都会打 4 条 [!!] 假告警。已收敛为实际会产出的包。
+          for pat in daed luci-app-daede v2ray-geoip v2ray-geosite; do
             n=$(find bin/packages -name "$pat-*.apk" 2>/dev/null | wc -l)
             if [ "$n" -gt 0 ]; then echo "  [OK]  $pat  ($n 个 .apk)"; else echo "  [!!]  $pat 没有产出 .apk"; fi
           done
@@ -308,14 +314,21 @@ jobs:
       - name: Collect proxy packages (for overlay install)
         if: always()
         run: |
-          # 把编出来的代理 .apk 收集起来单独上传：若镜像因体积超限失败，
-          # 或后续想改成 =m，可以拷到设备装进 overlay。
+          # 把编出来的代理相关 .apk 收集起来单独上传，便于重装/升版。
           #
-          # 注意：这里必须包含「只被代理依赖」的包（如 yq），否则单独安装会缺依赖。
+          # 现状（2026-10-11 起）：代理只保留 daed，且已编入固件镜像，
+          # 所以这里能收集到的只是 daed / luci-app-daede / v2ray-geoip / v2ray-geosite，
+          # 都是镜像内已有的包 —— 此 artifact 仅供重装或升版使用。
+          # （yq 原本是 Nikki 的依赖，Nikki 移除后已不再编译。）
+          #
+          # ⚠️ 2026-10-15 修复：原来 `for pat in \` 之后有一行**空行**，续行反斜杠
+          #    接上空行等于语句在此结束，下一行的 pattern 变成独立命令 →
+          #    `syntax error near unexpected token '"bin/packages/...apk"'` →
+          #    该步骤退出码 2 → 整个 job 失败 → Create Release 被跳过（10-14 两条线都因此没出 Release）。
+          #    续行后面必须**直接**跟第一个 pattern，不能有空行。
           mkdir -p proxy-pkgs
           shopt -s nullglob
           for pat in \
-
             "bin/packages/*/*/sing-box-*.apk" \
             "bin/packages/*/*/homeproxy-*.apk" \
             "bin/packages/*/*/luci-app-homeproxy-*.apk" \
@@ -337,9 +350,10 @@ jobs:
           ls -la proxy-pkgs/ || true
           du -sh proxy-pkgs/ 2>/dev/null || true
           echo
-          echo "== 安装清单（拷到设备后按序执行）=="
-          echo "  # homeproxy（sing-box 内核）"
-          echo "  apk add --allow-untrusted ./sing-box-*.apk ./luci-app-homeproxy-*.apk ./luci-i18n-homeproxy-*.apk"
+          echo "== 说明 =="
+          echo "  daed / luci-app-daede / v2ray-geoip / v2ray-geosite 均已编入固件镜像，"
+          echo "  此处的 .apk 仅供重装或升版使用："
+          echo "    apk add --allow-untrusted ./daed-*.apk ./luci-app-daede-*.apk"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
@@ -380,9 +394,9 @@ jobs:
             echo "XG2010G（Gemtek XG2010G / Airoha AN7581）专属构建："
             echo "- IPTV：rtp2httpd（组播转单播 + RTSP 时移回看 + FCC 快速换台）"
             echo "- DDNS：ddns-go"
-            echo "- 透明代理：只采用 daed（已编入固件）。homeproxy(sing-box) 因 64 MiB 镜像上限"
-            echo "  改为只编译不编入，.apk 在 artifact xg2010g-proxy-packages 里，可 apk add 装进 overlay。"
-            echo "  Nikki 及其 mihomo 内核已于 2026-10-11 连同 feed 一并移除。"
+            echo "- 透明代理：只采用 daed（luci-app-daede + daed，已编入固件）"
+            echo "  homeproxy(sing-box) / Nikki(mihomo) 已于 2026-10-11 从配置中彻底移除（not set），"
+            echo "  既不编入镜像也不产出 .apk；相关 feed 与 OpenClash 残留已一并清理。"
             echo "- 主题：Aurora"
             echo "- 语音：保留运营商语音通话（Asterisk + asterisk-chan-en75xx），去掉本机电话主机功能"
             echo "- OpenClash：不使用，已移除全部残留"

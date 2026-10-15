@@ -270,13 +270,21 @@ jobs:
       - name: Collect proxy packages (for overlay install)
         if: always()
         run: |
-          # 把编出来的代理 .apk 单独收集上传：即使镜像因体积/启动风险不便使用，
-          # 也可以拷到设备装进 overlay。
-          # 注意：必须包含「只被代理依赖」的包（如 yq），否则单独安装会缺依赖。
+          # 把编出来的代理相关 .apk 收集起来单独上传，便于重装/升版。
+          #
+          # 现状（2026-10-11 起）：代理只保留 daed，且已编入固件镜像，
+          # 所以这里能收集到的只是 daed / luci-app-daede / v2ray-geoip / v2ray-geosite，
+          # 都是镜像内已有的包 —— 此 artifact 仅供重装或升版使用。
+          # （yq 原本是 Nikki 的依赖，Nikki 移除后已不再编译。）
+          #
+          # ⚠️ 2026-10-15 修复：原来 `for pat in \` 之后有一行**空行**，续行反斜杠
+          #    接上空行等于语句在此结束，下一行的 pattern 变成独立命令 →
+          #    `syntax error near unexpected token '"bin/packages/...apk"'` →
+          #    该步骤退出码 2 → 整个 job 失败 → Create Release 被跳过（10-14 两条线都因此没出 Release）。
+          #    续行后面必须**直接**跟第一个 pattern，不能有空行。
           mkdir -p proxy-pkgs
           shopt -s nullglob
           for pat in \
-
             "bin/packages/*/*/sing-box-*.apk" \
             "bin/packages/*/*/homeproxy-*.apk" \
             "bin/packages/*/*/luci-app-homeproxy-*.apk" \
