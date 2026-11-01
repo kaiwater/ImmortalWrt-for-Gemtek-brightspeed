@@ -254,6 +254,10 @@ jobs:
           # V=w 的语义（include/verbose.mk:61）：findstring w 命中 → 不追加 2>&1
           #   → SILENT 只剩 >/dev/null，**保留 stderr**、仅丢弃命令回显。
           # 不敢用 V=s：全量 verbose 会把每条编译命令都打进日志，几十万行。
+          # [custom] 先单独把 libffi 编进 staging。
+          # python3 的 --with-system-ffi 没有声明 target libffi 依赖，并行调度里
+          # 可能与 libffi 竞争；先编 libffi 就保证 _ctypes 一定能找到 ffi.h。
+          make -j2 package/libs/libffi/compile V=w
           make -j2 world V=w 2>&1 | tee build.log
 
       - name: Check build status
