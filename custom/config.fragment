@@ -75,3 +75,10 @@ CONFIG_PACKAGE_bind-dig=y
 CONFIG_PACKAGE_bash=y
 CONFIG_PACKAGE_at=y
 CONFIG_PACKAGE_openssl-util=y
+
+# ---------- build fix (not a user-facing app) ----------
+# python3 (built as a dependency of i2c-tools' Py3Build path) configures with
+# --with-system-ffi but the packages feed does not declare a target libffi
+# build dependency, so _ctypes.c fails with "ffi.h: No such file or directory".
+# Selecting libffi stages ffi.h for that build. Costs ~40 KiB in the image.
+CONFIG_PACKAGE_libffi=y
