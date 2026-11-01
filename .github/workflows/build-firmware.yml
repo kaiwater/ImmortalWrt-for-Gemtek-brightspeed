@@ -50,6 +50,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      # ccache 由下面的 restore/save 步骤持久化到 GitHub Actions cache。
+      # 压缩 + 2 GiB 上限，避免单个缓存条目吃掉仓库的 10 GiB 配额。
+      CCACHE_COMPRESS: '1'
+      CCACHE_MAXSIZE: '2G'
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -89,6 +94,33 @@ jobs:
             fi
           done
           command -v clang llc opt llvm-dis llvm-strip || true
+
+      # ── 缓存恢复：放在最前面 ──────────────────────────────────────────────
+      # 目标：后面任何一个环节（feeds update / download / 工具链 / 任意包编译）
+      # 失败时，下一次运行都能直接复用已经下载的源码和已经编译过的对象，
+      # 不必从零重来。因此 restore 必须在 Install feeds 之前执行。
+      #
+      # dl/  = `make download` 的产物（约 1-2 GiB）
+      # .ccache = ccache 的对象缓存（约 1-2 GiB，压缩后更小）
+      # 两者合计控制在仓库 10 GiB 缓存配额内；GitHub 按 LRU 淘汰旧条目。
+      - name: Restore dl cache
+        uses: actions/cache/restore@v6
+        with:
+          path: dl
+          key: dl-${{ runner.os }}-${{ hashFiles('feeds.conf.default', '1710.config', 'custom/config.fragment') }}
+          restore-keys: |
+            dl-${{ runner.os }}-
+
+      - name: Restore ccache
+        uses: actions/cache/restore@v6
+        with:
+          path: .ccache
+          # run_id 让每次运行都能保存一份新的 ccache；restore-keys 保证
+          # 先命中「同配置的最近一份」，再退到「任意配置的最近一份」。
+          key: ccache-${{ runner.os }}-${{ hashFiles('feeds.conf.default', '1710.config', 'custom/config.fragment') }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-${{ runner.os }}-${{ hashFiles('feeds.conf.default', '1710.config', 'custom/config.fragment') }}-
+            ccache-${{ runner.os }}-
 
       - name: Install feeds
         run: |
@@ -171,6 +203,12 @@ jobs:
           # [custom] 应用自定义插件开关（与 config 文件解耦，同步上游不会被覆盖）
           if [ -f custom/config.fragment ]; then
             cat custom/config.fragment >> .config
+          fi
+          # [custom] 启用 ccache：只改变编译方式，不影响软件包选择，也不进镜像。
+          # 种子配置里是 "# CONFIG_CCACHE is not set"，这里在后追加 =y 覆盖它
+          # （kconfig 读取 .config 时后出现的赋值生效）。
+          if ! grep -qx 'CONFIG_CCACHE=y' .config; then
+            echo 'CONFIG_CCACHE=y' >> .config
           fi
           # [custom] VERSION_DIST / VERSION_NUMBER 决定文件名前缀
           VERSION_DIST='immortalwrt' \
@@ -370,3 +408,23 @@ jobs:
             bin/targets/airoha/an7581/sha256sums
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── 缓存保存：always()，构建失败也保存 ────────────────────────────────
+      # 这样下一次运行不会重下源码、重编已经编过的对象 —— 失败点之前的工作
+      # 全部留在缓存里。continue-on-error 防止缓存写失败（例如同 key 已存在、
+      # 配额已满）把整个 job 标红。
+      - name: Save dl cache
+        if: always()
+        continue-on-error: true
+        uses: actions/cache/save@v6
+        with:
+          path: dl
+          key: dl-${{ runner.os }}-${{ hashFiles('feeds.conf.default', '1710.config', 'custom/config.fragment') }}
+
+      - name: Save ccache
+        if: always()
+        continue-on-error: true
+        uses: actions/cache/save@v6
+        with:
+          path: .ccache
+          key: ccache-${{ runner.os }}-${{ hashFiles('feeds.conf.default', '1710.config', 'custom/config.fragment') }}-${{ github.run_id }}

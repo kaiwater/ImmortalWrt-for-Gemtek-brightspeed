@@ -48,6 +48,19 @@ custom/upstream/build-firmware.yml.sha         上游 workflow 同步提示
 - 不再接受 `2010.config`
 - 只构建 `gemtek_xr1710g`（0x700000）
 
+### 缓存布局
+
+所有 cache 的 **restore 都在 Install feeds 之前**，save 用 `always()` 放在 job 末尾：
+
+| 缓存 | 路径 | key | 作用 |
+|---|---|---|---|
+| `dl` | `dl/` | `feeds.conf.default` + `1710.config` + `config.fragment` 的 hash | 复用 `make download` 的源码包，不再重复下载 |
+| `ccache` | `.ccache`（`CONFIG_CCACHE=y`） | 同上 hash + `run_id`，restore-keys 逐级回退 | 复用已编译对象：工具链、内核、包 |
+
+这样 feeds / download / 工具链 / 包编译任何一步失败，下一次运行都能直接接着上次的进度，
+而不是从零重来。ccache 用 `CCACHE_COMPRESS=1`、`CCACHE_MAXSIZE=2G`，两份缓存合计控制在
+仓库 10 GiB 配额内。
+
 手动触发：
 
 ```sh
