@@ -16,12 +16,13 @@
 参考 `kaiwater/wrt_release` 的 AP8220 `compile_base` + `proxy`：
 
 - 透明代理：**passwall + sing-box**
-- 应用：lucky、smartdns、ttyd、upnp、wol、filemanager、commands、oaf、zerotier、autoreboot、vlmcsd、ddns-go、rtp2httpd、btop、htop
+- 应用：lucky、smartdns、ttyd、upnp、wol、filemanager、commands、zerotier、autoreboot、vlmcsd、ddns-go、rtp2httpd、btop、htop
 - 工具：chinadns-ng、coreutils、socat、screen、tcpdump、nano、iperf3、xz-utils、bc、hostapd-utils、umdns、dmesg、bind-dig、bash、at、openssl-util、zram
 
 明确移除：
 
 - istorex / pbr / adguardhome
+- luci-app-oaf：naoki66 的 feeds 里没有 OpenAppFilter，需要额外第三方 feed 才能编入，故不启用
 - OpenClash / argon-config / daed
 - samba_ksmbd（没有 USB 存储需求）
 - 2010 专用内容
