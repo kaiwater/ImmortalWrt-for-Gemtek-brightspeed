@@ -209,3 +209,13 @@ iw dev phy0-ap0 station dump
   - `src/ap/ap_config.c:1560` 11be + PMF 自动启用
 - mac80211：`net/mac80211/wpa.c:869`（`ieee80211_crypto_aes_cmac_encrypt`）、
   `net/mac80211/tx.c:5532`（`ieee80211_beacon_protect`）
+
+## 9. 后续
+
+- **2026-11-01**：本补丁合入前启动的构建 `41289580224`（基于 `6f844cd5`，**不含**本
+  补丁）在 `Build Firmware` 步骤失败，与 mt76 无关：卡在 `python3` 编译，
+  `Python-3.14.7` 的 `profile-opt` 阶段报
+  `Modules/_ctypes/_ctypes.c:119:10: fatal error: ffi.h: No such file or directory`，
+  整份日志里没有任何 libffi 编译记录。也就是说 `_ctypes` 在编译时找不到 libffi 头文件。
+  需要先解决该构建问题（或让 `libffi` / `CONFIG_PACKAGE_libffi` 进入 staging），
+  才能跑包含本补丁的构建并做实机验证。
