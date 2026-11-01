@@ -254,10 +254,11 @@ jobs:
           # V=w 的语义（include/verbose.mk:61）：findstring w 命中 → 不追加 2>&1
           #   → SILENT 只剩 >/dev/null，**保留 stderr**、仅丢弃命令回显。
           # 不敢用 V=s：全量 verbose 会把每条编译命令都打进日志，几十万行。
-          # [custom] 先单独把 libffi 编进 staging。
-          # python3 的 --with-system-ffi 没有声明 target libffi 依赖，并行调度里
-          # 可能与 libffi 竞争；先编 libffi 就保证 _ctypes 一定能找到 ffi.h。
-          make -j2 package/libs/libffi/compile V=w
+          # [custom] 不单独 pre-build libffi：`make package/.../compile` 不会先跑
+          # `make tools/install`，会用不到 staging_dir/host/bin 里的 sed/openssl 而失败。
+          # 走 world 即可：核心树 package/* 先于 package/feeds/* 编译，
+          # libffi（package/libs/libffi）一定在 feeds 的 python3 之前进 staging，
+          # python3 的 _ctypes 到很后面才编，ffi.h 一定已经就位。
           make -j2 world V=w 2>&1 | tee build.log
 
       - name: Check build status
