@@ -20,6 +20,20 @@
 - 工具：chinadns-ng、coreutils、socat、screen、tcpdump、nano、iperf3、xz-utils、bc、hostapd-utils、umdns、dmesg、bind-dig、bash、at、openssl-util、zram
 - `libffi`：仅为构建期修复（python3 以 `--with-system-ffi` 编译但 feed 未声明 target libffi 依赖），不是用户功能
 
+### libffi 来源
+
+ImmortalWrt 已把 `libffi` 从 `packages` feed 移到核心树 `package/libs/libffi`
+（openwrt/packages 同样移除）。`naoki66` 基线尚未同步这一步，导致：
+
+```text
+WARNING: No feed for package 'libffi' found
+Modules/_ctypes/_ctypes.c:119:10: fatal error: ffi.h: No such file or directory
+```
+
+因此本分支直接回填 `package/libs/libffi/`（取自 `immortalwrt/immortalwrt` master，
+libffi 3.8.0），行为与上游一致，后续同步上游时该目录内容相同、不会冲突。
+
+
 明确移除：
 
 - istorex / pbr / adguardhome
