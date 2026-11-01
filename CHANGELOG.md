@@ -3,6 +3,26 @@
 本文件记录 Gemtek Brightspeed 固件仓库的重要功能、稳定性和维护变更。常规的
 ImmortalWrt 上游合并不逐项展开，仅记录会影响本设备构建或运行行为的内容。
 
+单次变更的详细报告放在 [`changelog/`](changelog/README.md)，本文件只保留摘要与索引。
+
+## 2026-11-01
+
+### mt7996 宣告 802.11 信标保护（Beacon Protection）能力
+
+- 新增 `package/kernel/mt76/patches/9995-wifi-mt76-mt7996-advertise-beacon-protection.patch`，
+  在 `mt7996_init_wiphy()` 中补上 `NL80211_EXT_FEATURE_BEACON_PROTECTION`。
+  mt7996 早就实现了 BIGTK（keyidx 6/7 → `hw_key_idx2`）、BIP cipher TLV、
+  `IEEE80211_KEY_FLAG_GENERATE_MMIE` 和 BIGTK 安装后的 beacon remove/re-add，
+  唯独没有宣告能力位；hostapd 因此静默清掉 `beacon_prot`，BIGTK 从不协商，
+  Beacon 里也就永远没有 MMIE。
+- 仅开 AP 侧，不设置 `..._BEACON_PROTECTION_CLIENT`。
+- 影响面只有 MT7996/MT7992；mt7915、mt7615 等其它 mt76 驱动不受影响。
+- 5G/6G 的 EHT + SAE 默认配置会自动启用（hostapd `2026-08-07` 起 11be+PMF 自动开
+  `beacon_prot`）；2G 默认 `psk2` 未开 PMF，需显式 `ieee80211w=2` + `beacon_prot=1`。
+- 补丁已在锁定的 mt76 `467ae2e3f190` 上连同 `0003/100/110/9993/9994` 一起校验可
+  干净应用；**实机验证待包含本补丁的构建完成**。
+- 详细报告：[`changelog/2026-11-01-mt7996-beacon-protection.md`](changelog/2026-11-01-mt7996-beacon-protection.md)
+
 ## 2026-10-08
 
 ### 同步 ImmortalWrt 上游至 6.18.54
