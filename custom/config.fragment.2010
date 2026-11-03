@@ -1,0 +1,259 @@
+# ============================================================
+# XG2010G（2010.config）专用插件开关
+# 由 .github/workflows/build-2010.yml 在 make defconfig 之前追加到 .config。
+# 放在 custom/ 里，同步 naoki66 / ImmortalWrt 上游时不会被覆盖。
+#
+# 本文件只影响 XG2010G 构建；XR1710G 用的是 custom/config.fragment。
+#
+# 📌 2026-10-11 定稿摘要（当前生效的选择）：
+#   ① IPTV：只用 rtp2httpd（msd_lite / udpxy 已关）
+#   ② DDNS：只用 ddns-go（ddns-scripts 全套已关）
+#   ③ 透明代理：**只采用 daed**（OpenClash / homeproxy / Nikki 全部移除）
+#   ④ 主题：Aurora
+#   ⑤ Lucky：不使用（ddns-go 已够，且 Lucky 1.4.10 后不再开源）
+#   ⑥ 语音：保留运营商通话，去掉本机电话主机/PBX 功能
+#   ⑦ 不含任何 =m 中间态 —— 要么编入镜像、要么完全不编译
+#
+# 历史沿革：
+#   2026-10-04 首版：rtp2httpd 取代 msd_lite；三个代理全编入；主题改 Aurora
+#   2026-10-06：移除 OpenClash；移除 Ruby 全家桶 + lyaml/libyaml；移除 lucky
+#   2026-10-11：代理收敛为只留 daed；移除 XG2010G 2 GiB 变体（本机是 1 GiB 版）
+# ============================================================
+
+# ---------- ① IPTV：改用 rtp2httpd ----------
+# rtp2httpd 完整覆盖 msd_lite 的能力（组播 RTP/UDP → HTTP 单播），并额外提供：
+#   · RTSP → HTTP：转发运营商 RTSP 时移源，实现「回看」
+#   · FCC（Fast Channel Change）：显著降低换台时延
+#   · EPG / catchup-source 自动处理、udpxy URL 兼容、RS-FEC 抗丢包
+# msd_lite 只做组播转单播，以上能力全无 —— 因此二者只保留 rtp2httpd 一个。
+CONFIG_PACKAGE_rtp2httpd=y
+CONFIG_PACKAGE_luci-app-rtp2httpd=y
+CONFIG_PACKAGE_luci-i18n-rtp2httpd-zh-cn=y
+# msd_lite 与 rtp2httpd 功能重复，关闭
+# CONFIG_PACKAGE_msd_lite is not set
+# CONFIG_PACKAGE_luci-app-msd_lite is not set
+# CONFIG_PACKAGE_luci-i18n-msd_lite-zh-cn is not set
+# udpxy 同样重复且能力弱于 rtp2httpd
+# CONFIG_PACKAGE_udpxy is not set
+# CONFIG_PACKAGE_luci-app-udpxy is not set
+# CONFIG_PACKAGE_luci-i18n-udpxy-zh-cn is not set
+
+# ---------- ② DDNS：只用 ddns-go ----------
+CONFIG_PACKAGE_ddns-go=y
+CONFIG_PACKAGE_luci-app-ddns-go=y
+CONFIG_PACKAGE_luci-i18n-ddns-go-zh-cn=y
+# 传统 ddns-scripts 一套不再需要
+# CONFIG_PACKAGE_luci-app-ddns is not set
+# CONFIG_PACKAGE_luci-i18n-ddns-zh-cn is not set
+# CONFIG_PACKAGE_ddns-scripts is not set
+# CONFIG_PACKAGE_ddns-scripts-services is not set
+# CONFIG_PACKAGE_ddns-scripts-aliyun is not set
+# CONFIG_PACKAGE_ddns-scripts-cloudflare is not set
+# CONFIG_PACKAGE_ddns-scripts-dnspod-v3 is not set
+
+# --- 2.1 Lucky：XG2010G 不使用（2026-10-06 定稿）---
+#
+# 定稿结论：**2010G 不需要 Lucky，1710G 需要 Lucky**。
+# 2010G 上只需要 DDNS，ddns-go 已经满足。实测对比（真机）：
+#     ddns-go   常驻内存 12.7 MB，空载 CPU 0.033%
+#     Lucky     常驻内存 37.0 MB，空载 CPU 0.200%
+#   → 内存约 3 倍、CPU 约 6 倍。而且 Lucky 测的是「空配置地板」，
+#     它哪怕一条规则都不配，整套模块框架（反代/证书/存储/WAF/计划任务）
+#     的开销照样在。只为了 DDNS 去扛这整套框架不划算。
+#   另外 Lucky 从 1.4.10 之后不再开源，放在主路由上不合适。
+#
+# 注意：上游 2010.config 里这三个是
+#     CONFIG_PACKAGE_lucky=m
+#     CONFIG_PACKAGE_luci-app-lucky=m
+#     CONFIG_PACKAGE_luci-i18n-lucky-zh-cn=y
+# 其中 =m 的会编译出 .apk（不进镜像但占构建时间），=y 的 i18n 会因依赖
+# 被降级成 =m。要「完全不要」，三个都必须显式写成 not set。
+#
+# 1710G 那边（custom/config.fragment）不动 —— 上游 1710.config 里三个都是 =y，
+# 已编入镜像。
+# CONFIG_PACKAGE_lucky is not set
+# CONFIG_PACKAGE_luci-app-lucky is not set
+# CONFIG_PACKAGE_luci-i18n-lucky-zh-cn is not set
+
+# ---------- ③ 透明代理：XG2010G 只采用 daed ----------
+#
+# 📌 2026-10-11 定稿：代理插件只留 daed，homeproxy 与 Nikki 完全移除。
+#   （用户明确：2010G 的代理插件只需要采用 daed。）
+#
+#   历史沿革（记下来避免以后误改回去）：
+#   · 2026-10-04：镜像上限 64 MiB（U-Boot 0x90000000/0x94000000 双缓冲间隙，
+#     硬约束）。实测三个全 =y 会到 77.86 MiB（81646644 > 67108864），超限
+#     13.86 MiB，且 check-size 会**静默删掉 ITB**、构建仍显示成功。
+#     故把 homeproxy / Nikki 降成 =m，只留 daed。
+#   · 2026-10-06：上游 e46600c9cc 把 XG2010G 的 IMAGE_SIZE 提到 128 MiB，
+#     限制解除，于是把这两个改回 =y（实测镜像 77.87 MiB，构建成功）。
+#   · 2026-10-11：用户定稿**只采用 daed**，这两个改成 not set。
+#
+#   为什么用 not set 而不是 =m：
+#     =m 仍会编译出 .apk（占构建时间与 artifact 体积）。10-04 时保留 =m 的
+#     目的是"三个方案都能在设备上跑起来做 PPE 对比测试"；该测试已结束，
+#     不再需要这些 .apk，所以直接 not set（连编译都不做）。
+#
+#   体积影响：镜像从 77.87 MiB 回落到约 48.9 MiB。
+#
+#   若以后要恢复其中某一个：把对应几行的 not set 改成 =y 即可（128 MiB 上限内
+#   余量充裕）。但注意透明代理会同时争抢 DNS 接管、TPROXY/nftables 规则与
+#   路由表，**同一时间只应启用一个**。
+
+# --- 3.1 homeproxy（sing-box 内核）—— XG2010G 不使用 ---
+# CONFIG_PACKAGE_luci-app-homeproxy is not set
+# CONFIG_PACKAGE_luci-i18n-homeproxy-zh-cn is not set
+# CONFIG_PACKAGE_homeproxy is not set
+# CONFIG_PACKAGE_sing-box is not set
+
+# --- 3.2 Nikki（mihomo 内核）—— XG2010G 不使用 ---
+# CONFIG_PACKAGE_luci-app-nikki is not set
+# CONFIG_PACKAGE_luci-i18n-nikki-zh-cn is not set
+# CONFIG_PACKAGE_nikki is not set
+# CONFIG_PACKAGE_mihomo-meta is not set
+# 代理相关的通用内核支持（原本是为 Nikki/homeproxy 显式列出的）。
+# 2026-10-11 起两者已 not set，这几项保留：它们是通用网络能力，
+# 体积极小（合计几十 KB），且 daed 若需要某些项也会由 DEPENDS 自动拉入。
+CONFIG_PACKAGE_kmod-dummy=y
+CONFIG_PACKAGE_kmod-inet-diag=y
+CONFIG_PACKAGE_kmod-nft-socket=y
+CONFIG_PACKAGE_kmod-nft-tproxy=y
+CONFIG_PACKAGE_kmod-tun=y
+
+# --- 3.3 daed（kenzok8/openwrt-daede，eBPF 内核）---
+# 由 custom/feeds.conf.2010 引入的 feed 提供：dae 内核 / daed / luci-app-daede
+# luci-app-daede 取代 immortalwrt 的 luci-app-daed 界面，自带中文语言文件。
+CONFIG_PACKAGE_luci-app-daede=y
+CONFIG_PACKAGE_luci-app-daede_daed=y
+# 如需 dae 命令行后端（可在界面里热切换），把下面一行改 =y
+# CONFIG_PACKAGE_luci-app-daede_dae is not set
+CONFIG_PACKAGE_daed=y
+# 旧界面不再安装
+# CONFIG_PACKAGE_luci-app-daed is not set
+# CONFIG_PACKAGE_luci-i18n-daed-zh-cn is not set
+# daed-geoip / daed-geosite 是 immortalwrt 侧的聚合包；kenzok8 的 daed
+# 已直接依赖 v2ray-geoip / v2ray-geosite
+# CONFIG_PACKAGE_daed-geoip is not set
+# CONFIG_PACKAGE_daed-geosite is not set
+
+# --- 3.4 pbr 策略路由（非代理，但与代理同属分流工具，保持关闭）---
+# CONFIG_PACKAGE_luci-app-pbr is not set
+# CONFIG_PACKAGE_luci-i18n-pbr-zh-cn is not set
+# CONFIG_PACKAGE_pbr is not set
+
+# --- 3.5 PassWall 残留开关（本体从未选入）---
+# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Haproxy is not set
+# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Shadowsocks_Rust_Client is not set
+# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Shadowsocks_Rust_Server is not set
+# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Simple_Obfs is not set
+# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_SingBox is not set
+# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_V2ray_Geoview is not set
+# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_V2ray_Plugin is not set
+# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Xray is not set
+
+# --- 3.6 OpenClash：明确不使用 ---
+# CONFIG_PACKAGE_luci-app-openclash is not set
+# CONFIG_PACKAGE_luci-i18n-openclash-zh-cn is not set
+
+# ---------- ④ 主题：改用 Aurora ----------
+# Aurora 由 build-2010.yml 的 "Add Aurora theme package" 步骤克隆到
+# package/luci-theme-aurora（其 Makefile 在仓库根目录，必须放在这个目录名下
+# 才能得到包名 luci-theme-aurora）。默认主题由
+# custom/files-2010/etc/uci-defaults/99-theme-aurora.sh 设为 aurora。
+CONFIG_PACKAGE_luci-theme-aurora=y
+# 可选：Aurora 的配套设置界面（主题预设 / 配色 / 布局）。需要时打开。
+# CONFIG_PACKAGE_luci-app-aurora-config=y
+# CONFIG_PACKAGE_luci-i18n-aurora-config-zh-cn=y
+# glass 与 argon 一并换掉
+# CONFIG_PACKAGE_luci-theme-glass is not set
+# CONFIG_PACKAGE_luci-theme-argon is not set
+# CONFIG_PACKAGE_luci-app-argon-config is not set
+# CONFIG_PACKAGE_luci-i18n-argon-config-zh-cn is not set
+
+# ---------- ⑤ 语音：保留"运营商语音通话"，去掉"电话主机/PBX"功能 ----------
+# 保留（插电话线能正常打电话所必需）：
+CONFIG_PACKAGE_airoha-voice-ctl=y
+CONFIG_PACKAGE_asterisk=y
+CONFIG_PACKAGE_asterisk-pjsip=y
+CONFIG_PACKAGE_asterisk-chan-en75xx=y
+CONFIG_PACKAGE_asterisk-codec-ulaw=y
+CONFIG_PACKAGE_asterisk-codec-alaw=y
+CONFIG_PACKAGE_asterisk-format-sln=y
+CONFIG_PACKAGE_asterisk-format-wav=y
+CONFIG_PACKAGE_asterisk-res-rtp-asterisk=y
+CONFIG_PACKAGE_asterisk-app-playtones=y
+# 去掉（本地电话主机/小总机才用得上的功能）：
+# CONFIG_PACKAGE_asterisk-app-record is not set
+# CONFIG_PACKAGE_asterisk-app-stack is not set
+# CONFIG_PACKAGE_asterisk-bridge-softmix is not set
+# CONFIG_PACKAGE_asterisk-res-musiconhold is not set
+# CONFIG_PACKAGE_asterisk-sounds is not set
+# CONFIG_PACKAGE_asterisk-codec-a-mu is not set
+# CONFIG_PACKAGE_asterisk-codec-gsm is not set
+# CONFIG_PACKAGE_asterisk-format-gsm is not set
+# 说明：g722 是宽带编码（16 kHz），而 XG2010G 的 Si32192 SLIC 是窄带（8 kHz），
+# 用不到，已去掉以省体积。
+# CONFIG_PACKAGE_asterisk-codec-g722 is not set
+# 若发现电话打不通/没声音，优先把下面两条改回 =y 再编一次：
+# CONFIG_PACKAGE_asterisk-pbx-spool is not set
+# CONFIG_PACKAGE_asterisk-format-pcm is not set
+
+# ============================================================
+# ⑥ daed 需要的内核支持
+#
+# 依据：immortalwrt/packages 的 net/daed/Makefile 明确写着
+#   # You need enable KERNEL_DEBUG_INFO_BTF and KERNEL_BPF_EVENTS
+# 而本仓库 target/linux/generic/config-6.18 里下列项目默认是关闭的：
+#   # CONFIG_DEBUG_INFO_BTF is not set
+#   # CONFIG_NET_ACT_BPF is not set
+#   # CONFIG_NET_CLS_BPF is not set
+#   # CONFIG_NET_SCH_INGRESS is not set
+# 2010.config 里 CONFIG_KERNEL_DEBUG_INFO_REDUCED=y 会进一步挡住 BTF
+# （Kconfig: KERNEL_DEBUG_INFO_BTF depends on !KERNEL_DEBUG_INFO_REDUCED），
+# 所以三行都要处理。
+# ============================================================
+
+# ---- daed 必需：内核 BTF 与 BPF 事件 ----
+CONFIG_KERNEL_DEBUG_INFO=y
+# CONFIG_KERNEL_DEBUG_INFO_REDUCED is not set
+CONFIG_KERNEL_DEBUG_INFO_BTF=y
+CONFIG_KERNEL_BPF_EVENTS=y
+CONFIG_KERNEL_BPF_STREAM_PARSER=y
+CONFIG_KERNEL_CGROUP_BPF=y
+# kenzok8 的 daed/dae 声明了 +@KERNEL_XDP_SOCKETS，2010.config 默认是关的
+CONFIG_KERNEL_XDP_SOCKETS=y
+
+# ---- libffi：python3 编 _ctypes 的必需项 ----
+# 2026-11-02 定位：python3 用 --with-system-ffi + PYTHONSTRICTEXTENSIONBUILD=1，
+# _ctypes 一定会被编译并要求 staging 里有 ffi.h。原先这行 =y 是无效的 ——
+# 因为 naoki66 上游树里 package/libs/libffi 整个包都不存在
+# （immortalwrt 主树有 3.8.0，naoki66 树递归搜索 libffi 结果为空），
+# kconfig 对不存在的符号静默忽略，构建时只会打
+#   WARNING: Makefile 'package/feeds/packages/glib2/Makefile' has a dependency on 'libffi', which does not exist
+# 然后 python3 报 Modules/_ctypes/_ctypes.c:119:10: fatal error: ffi.h: No such file or directory。
+# 已把 package/libs/libffi 从 immortalwrt 主树补回本仓库，这行才真正生效。
+CONFIG_PACKAGE_libffi=y
+
+# ---- TC-eBPF 内核模块（daed 的 DEPENDS 会自动带，这里显式写出便于核对）----
+CONFIG_PACKAGE_kmod-sched-core=y
+CONFIG_PACKAGE_kmod-sched-bpf=y
+CONFIG_PACKAGE_kmod-veth=y
+CONFIG_PACKAGE_kmod-xdp-sockets-diag=y
+
+# 代价说明：打开 BTF 后内核镜像会变大（多出 .BTF 段）、内核编译稍慢（pahole 生成 BTF）；
+# dae/daed 还要用 LLVM/BPF 工具链编译 eBPF 程序。
+# ---- BPF 工具链（dae/daed/bpf-headers 编译 eBPF 程序必需）----
+# 2010.config 没有 CONFIG_DEVEL，而 toolchain/Config.in 里
+#   choice BPF_TOOLCHAIN { prompt "BPF toolchain" if DEVEL }
+# 是"仅在 DEVEL 下可见"的隐藏 choice → 设置不生效 → include/bpf.mk 取到
+# /invalid/clang → package/kernel/bpf-headers 编译失败。
+# 因此：打开 DEVEL 让该 choice 可设，并选择"用宿主机 LLVM 工具链"
+# （省去从源码编译 LLVM 的 30~60 分钟）。
+CONFIG_DEVEL=y
+CONFIG_BPF_TOOLCHAIN_HOST=y
+# CONFIG_BPF_TOOLCHAIN_NONE is not set
+# CONFIG_BPF_TOOLCHAIN_BUILD_LLVM is not set
+CONFIG_USE_LLVM_HOST=y
+# 若宿主机工具链不可用，改用下面两行（代价：CI 里从源码构建 LLVM，慢且吃磁盘）：
+# CONFIG_BPF_TOOLCHAIN_BUILD_LLVM=y
+# CONFIG_USE_LLVM_BUILD=y

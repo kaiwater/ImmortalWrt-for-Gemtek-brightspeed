@@ -1,6 +1,21 @@
-name: Build Firmware
+name: Build XR1710G Firmware
+# 本文件 = naoki66 上游 workflow + 本仓库定制 hook（custom/ 目录）。
+# 同步上游时若与本文件冲突会保留本文件版本（见 sync-upstream.yml 里写入的 .git/info/attributes）。
+# 定制文件名规则：immortalwrt-<日期>-<仓库提交>-<上游提交>-<目标>-<设备>-<镜像类型>.itb
 
 on:
+  push:
+    branches:
+      - master
+    # [custom] 2026-10-04 加 paths 过滤：以前任何 push 到 master 都会触发 XR1710G 构建
+    # 并发布 Release，导致只改 XG2010G（custom/*.2010、files-2010/、build-2010.yml）
+    # 也会顺带跑一次 XR1710G。现在只在下面这些文件变化时触发。
+    paths:
+      - '1710.config'
+      - 'custom/config.fragment'
+      - 'custom/feeds.conf.custom'
+      - 'custom/files/**'
+      - '.github/workflows/build-firmware.yml'
   workflow_dispatch:
     inputs:
       config_seed:
@@ -11,11 +26,10 @@ on:
         options:
           - 1710.config
           - 2010.config
-          - 2010-2g.config
       release_type:
-        description: 'Release Type'
+        description: 'Release Type（默认每次构建都发布 Release）'
         required: true
-        default: 'none'
+        default: 'release'
         type: choice
         options:
           - none
@@ -27,6 +41,10 @@ on:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+concurrency:
+  group: xr1710g-build
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -51,51 +69,133 @@ jobs:
           upstream_base=$(git merge-base HEAD upstream/master)
           upstream_commit=$(git rev-parse --short=8 "$upstream_base")
           build_id="${build_date}-${repo_commit}-${upstream_commit}"
-          # 文件名只保留 “日期-本机commit”，完整 build_id 落到 VERSION_CODE
-          version_number="${build_date}-${repo_commit}"
-          version_code="${build_id}"
 
           echo "date=$build_date" >> $GITHUB_OUTPUT
           echo "build_id=$build_id" >> $GITHUB_OUTPUT
           echo "repo_commit=$repo_commit" >> $GITHUB_OUTPUT
           echo "upstream_commit=$upstream_commit" >> $GITHUB_OUTPUT
-          echo "version_number=$version_number" >> $GITHUB_OUTPUT
-          echo "version_code=$version_code" >> $GITHUB_OUTPUT
-          case '${{ inputs.config_seed }}' in
-            1710.config) device_model=XR1710G ;;
-            2010.config) device_model=XG2010G ;;
-            2010-2g.config) device_model=XG2010G-2G ;;
-            *) echo "Unsupported config seed: ${{ inputs.config_seed }}" >&2; exit 1 ;;
-          esac
-          echo "device_model=$device_model" >> $GITHUB_OUTPUT
-          echo "Build version: ImmortalWrt-for-Gemtek-brightspeed $device_model $version_number"
+          echo "Build version: ImmortalWrt for XR1710G ${build_id}"
 
       - name: Setup build environment
         run: |
           sudo apt update
-          sudo apt install -y build-essential clang gcc g++ binutils bzip2 gawk gettext git libncurses-dev libssl-dev python3 python3-setuptools rsync unzip wget xsltproc zlib1g-dev file which perl sed make
+          # [custom] llvm 提供未加版本号的 llc/opt/llvm-dis/llvm-strip（include/bpf.mk 需要）。
+          # 2026-10-04 起 daed/dae 需要编译 eBPF 程序，所以必须装 llvm。
+          sudo apt install -y build-essential clang llvm gcc g++ binutils bzip2 gawk gettext git libncurses-dev libssl-dev python3 python3-setuptools rsync unzip wget xsltproc zlib1g-dev file which perl sed make
+          # 兜底：若未版本化工具不存在，就用最新版本建软链
+          for t in clang llc opt llvm-dis llvm-strip; do
+            if ! command -v "$t" >/dev/null 2>&1; then
+              src="$(ls -1 /usr/bin/$t-* 2>/dev/null | sort -V | tail -1)"
+              [ -n "$src" ] && sudo ln -sf "$src" "/usr/bin/$t" && echo "linked /usr/bin/$t -> $src"
+            fi
+          done
+          command -v clang llc opt llvm-dis llvm-strip || true
 
       - name: Install feeds
         run: |
+          # [custom] 自定义 feed 放在最前面：feeds 脚本按 feeds.conf 顺序取优先级，
+          # 同名包（如 dae/daed）优先使用自定义源里的最新版。
+          if [ -f custom/feeds.conf.custom ]; then
+            cat custom/feeds.conf.custom > feeds.conf
+            printf '\n' >> feeds.conf   # 防御：源文件末尾可能没有换行，否则会和下一行拼在一起
+          else
+            : > feeds.conf
+          fi
+          cat feeds.conf.default >> feeds.conf
+          echo "== feeds.conf =="
+          cat feeds.conf
+          echo "== feeds.conf 预检 =="
+          # scripts/feeds 剥注释用的是 s/#.+$//，.+ 要求 # 后至少一个字符。
+          # 所以「裸 # 行」（整行只有一个 #）不会被当成注释，会触发
+          # "Syntax error in feeds.conf, line N"。这里提前拦住，给出可读的报错。
+          if grep -n '^#$' feeds.conf; then
+            echo "::error::feeds.conf 存在裸 # 行（上面已列出行号），请改成空行，或 # 后带文字"
+            exit 1
+          fi
+          bad=$(grep -vn '^[[:space:]]*\(#.*\)\?$' feeds.conf | grep -v '^[0-9]*:src-' || true)
+          if [ -n "$bad" ]; then
+            echo "::error::feeds.conf 存在非 src- 开头的有效行："
+            echo "$bad"
+            exit 1
+          fi
+          echo "  feeds.conf 预检通过"
+
+          # ── 剔除上游引入的不可用 feed：pushbot ──
+          # feeds.conf.default 里有：
+          #   src-git pushbot https://github.com/zzsj0928/luci-app-pushbot.git
+          # （上游提交 ea5416bb26「新增推送机器人应用源」引入）
+          # 但该仓库是**单个 LuCI 应用的包仓库**，根 Makefile 是包 Makefile
+          # （PKG_NAME:=luci-app-pushbot + include $(TOPDIR)/rules.mk），
+          # **不是 feed 索引 Makefile**。scripts/feeds 把它当索引解析时报：
+          #   feeds/pushbot.tmp/info/.files-packageinfo.mk:1: *** target pattern contains no '%'.  Stop.
+          # 导致整个 Install feeds 失败（构建在 1 分多钟就挂掉）。
+          # 本仓库不需要该应用（推送用 luci-app-wechatpush，且已关闭），直接剔除。
+          if grep -q '^src-git pushbot ' feeds.conf; then
+            grep -v '^src-git pushbot ' feeds.conf > feeds.conf.tmp
+            mv feeds.conf.tmp feeds.conf
+            echo "  已剔除不可用的 pushbot feed"
+          fi
+
           ./scripts/feeds update -a
           ./scripts/feeds install -a
           bash scripts/fix-stale-golang-host.sh
 
+      - name: Drop duplicate dae/daed from other feeds
+        run: |
+          # immortalwrt/packages 里也有同名 dae/daed，会与 kenzok8 的版本冲突。
+          # 这里把其它 feed 的副本删掉，只保留 daede feed 的版本。
+          shopt -s nullglob
+          removed=0
+          for d in package/feeds/*/daed package/feeds/*/dae; do
+            case "$d" in
+              package/feeds/daede/*) echo "保留: $d"; continue ;;
+            esac
+            echo "移除重复包: $d"
+            rm -rf "$d"
+            removed=$((removed + 1))
+          done
+          echo "移除数量: $removed"
+          echo "== daede feed 安装情况 =="
+          ls -l package/feeds/daede/ 2>/dev/null || echo "（没有找到 package/feeds/daede）"
       - name: Apply feed patches
-        run: FEED_PATCHES_STRICT=1 bash scripts/apply-feed-patches.sh
+        run: |
+          # [custom] 上游脚本在旧树里可能还不存在，存在才执行
+          if [ -f scripts/apply-feed-patches.sh ]; then
+            FEED_PATCHES_STRICT=1 bash scripts/apply-feed-patches.sh
+          fi
 
       - name: Configure
         run: |
-          cp '${{ inputs.config_seed }}' .config
+          # [custom] push 触发时 inputs 为空，回退到 1710.config
+          config_seed='${{ inputs.config_seed }}'
+          cp "${config_seed:-1710.config}" .config
+          # [custom] 应用自定义插件开关（与 config 文件解耦，同步上游不会被覆盖）
+          if [ -f custom/config.fragment ]; then
+            cat custom/config.fragment >> .config
+          fi
+          # [custom] VERSION_DIST / VERSION_NUMBER 决定文件名前缀
+          VERSION_DIST='immortalwrt' \
+          VERSION_NUMBER='${{ steps.version.outputs.build_id }}' \
           BUILD_DATE='${{ steps.version.outputs.date }}' \
           BUILD_ID='${{ steps.version.outputs.build_id }}' \
           REPO_COMMIT='${{ steps.version.outputs.repo_commit }}' \
           UPSTREAM_COMMIT='${{ steps.version.outputs.upstream_commit }}' \
-          VERSION_CODE='${{ steps.version.outputs.version_code }}' \
+          VERSION_CODE='${{ steps.version.outputs.build_id }}' \
           bash scripts/set-build-version.sh .config
           make defconfig
-          bash scripts/check-gemtek-profile-isolation.sh --config .config
           grep -E 'CONFIG_(IMAGEOPT|EXTRA_IMAGE_NAME|VERSIONOPT|VERSION_DIST|VERSION_NUMBER|VERSION_CODE|VERSION_FILENAMES|VERSION_CODE_FILENAMES)[= ]' .config
+          echo "== 透明代理（只保留 daed）=="
+          grep -E 'CONFIG_PACKAGE_(luci-app-homeproxy|luci-i18n-homeproxy-zh-cn|homeproxy|sing-box|luci-app-nikki|luci-i18n-nikki-zh-cn|nikki|mihomo-meta|yq|luci-app-daede|luci-app-daede_daed|luci-app-daede_dae|luci-app-daed|daed|v2ray-geoip|v2ray-geosite)(=| is not set)' .config | sort || true
+          echo "== daed 相关内核开关 =="
+          grep -E 'CONFIG_KERNEL_(DEBUG_INFO_BTF|DEBUG_INFO_REDUCED|BPF_EVENTS|BPF_STREAM_PARSER|XDP_SOCKETS)' .config || true
+          echo "== BPF 工具链 =="
+          grep -E '^CONFIG_(DEVEL|BPF_TOOLCHAIN_HOST|BPF_TOOLCHAIN_NONE|BPF_TOOLCHAIN_BUILD_LLVM|USE_LLVM_HOST)=' .config || true
+
+      - name: Prepare custom files overlay
+        run: |
+          # [custom] 固件文件覆盖层（首次开机后台地址 192.168.5.1 等）
+          mkdir -p files
+          cp -a custom/files/. files/
 
       - name: Download sources
         run: make download -j$(nproc)
@@ -103,39 +203,21 @@ jobs:
       - name: Build Firmware
         shell: bash
         run: |
-          make -j2 world 2>&1 | tee build.log
-
-      - name: Verbose retry on build failure
-        if: failure()
-        shell: bash
-        run: |
-          failed_pkg=$(grep 'ERROR:.*failed to build' build.log | head -1 | sed 's/.*ERROR: \(.*\) failed to build.*/\1/' || true)
-          if [ -n "$failed_pkg" ]; then
-            echo "=== Rebuilding $failed_pkg with V=s ==="
-            make "package/$failed_pkg/compile" V=s -j1 2>&1 | tee build-verbose.log || true
-            echo "=== First errors in build-verbose.log ==="
-            grep -nE "error:|Error [0-9]|FAILED|Patch failed|No rule to make target" build-verbose.log | head -40 || true
-            echo "=== tail of build-verbose.log ==="
-            tail -80 build-verbose.log || true
-          else
-            echo "No failing package found in build.log" >&2
-            tail -150 build.log || true
-          fi
-
-      - name: Verify device isolation
-        shell: bash
-        run: |
-          bash scripts/check-firmware-artifacts.sh \
-            --config .config \
-            --directory bin/targets/airoha/an7581
-          kernel_config=$(find build_dir/target-aarch64_cortex-a53_musl/linux-airoha_an7581 -path '*/linux-*/.config' -print -quit)
-          manifest=$(find bin/targets/airoha/an7581 -maxdepth 1 -type f -name '*manifest' -print -quit)
-          test -n "$kernel_config"
-          test -n "$manifest"
-          bash scripts/check-gemtek-profile-isolation.sh \
-            --config .config \
-            --kernel-config "$kernel_config" \
-            --manifest "$manifest"
+          # [custom] 2026-10-06 加 V=w。
+          # 原因：OpenWrt 默认非 verbose 时，子 make 的 stdout 和 stderr 被
+          # include/verbose.mk 的 SILENT 变量整体丢进 /dev/null
+          #   SILENT:=/dev/null $(if $(findstring w,$(OPENWRT_VERBOSE)),,2>&1)
+          #   SUBMAKE=cmd() { $(SILENT) $(MAKE) -s "$@" ... } 8>&1 9>&2
+          # 只有 OpenWrt 自己经 MESSAGE/ERROR_MESSAGE 宏（写 >&8 / >&9）输出的内容可见；
+          # dtc / mkimage / dd 这类外部工具的错误走 fd2，会被 2>&1 一起吞掉。
+          # 表现就是子 make 报错后只留下一句兜底的
+          #   ERROR: target/linux failed to build.
+          # 而没有任何根因 —— 这正是 2026-10-06 那次失败无法定位的原因。
+          #
+          # V=w 的语义（include/verbose.mk:61）：findstring w 命中 → 不追加 2>&1
+          #   → SILENT 只剩 >/dev/null，**保留 stderr**、仅丢弃命令回显。
+          # 不敢用 V=s：全量 verbose 会把每条编译命令都打进日志，几十万行。
+          make -j2 world V=w 2>&1 | tee build.log
 
       - name: Check build status
         if: always()
@@ -152,25 +234,105 @@ jobs:
           ls -la bin/targets/ 2>/dev/null || echo "No files found in targets directory"
           echo "=== List all files in bin/ ==="
           ls -la bin/ 2>/dev/null || echo "No files found in bin directory"
+          # [custom] 2026-10-06：没有产出 .itb 就是构建失败，别让 workflow 显示成
+          # 「只有 Build Firmware 失败、其余全 success」这种误导性状态。
+          # 放在这里而不是 Report image size，因为本步在流水线中间：
+          # 后续 Collect proxy packages / Upload artifacts 都是 if: always()，
+          # 仍会照常执行，代理 .apk 和 build.log 不会丢。
+          if ! ls bin/targets/airoha/an7581/*sysupgrade.itb >/dev/null 2>&1; then
+            echo "::error::未产出 sysupgrade.itb，构建失败。根因见上面 Build Firmware 步骤（已用 V=w 保留工具 stderr）"
+            exit 1
+          fi
+
+      - name: Report image size
+        if: always()
+        run: |
+          # [custom] XR1710G 的设备定义里没有 IMAGE_SIZE，构建时不会有 check-size 拦截，
+          # 所以超限不会报错 —— 但也不代表刷进去能启动。历史最大构建产物为 77.30 MiB，
+          # 这里把实际大小打印出来，并在超过该值时给出警告。
+          itb="$(ls bin/targets/airoha/an7581/*sysupgrade.itb 2>/dev/null | head -1)"
+          if [ -z "$itb" ]; then
+            echo "::warning::没有生成 sysupgrade.itb，构建未产出镜像"
+            exit 0
+          fi
+          size=$(stat -c %s "$itb")
+          mib=$(awk -v s="$size" 'BEGIN{printf "%.2f", s/1048576}')
+          echo "ITB : $itb"
+          echo "大小: ${mib} MiB"
+          # 77.30 MiB = 81060000 B 附近，是此前真机验证过的最大值
+          awk -v s="$size" 'BEGIN{
+            printf "对比历史已验证最大值 77.30 MiB：%s\n", (s/1048576 > 77.30 ? "超出" : "未超出");
+          }'
+          if [ "$size" -gt 81060000 ]; then
+            echo "::warning::镜像 ${mib} MiB 超过历史已验证的 77.30 MiB。XR1710G 的 U-Boot FIT 上限未经证实，刷入后可能无法启动，请谨慎。"
+          fi
+
+      - name: Collect proxy packages (for overlay install)
+        if: always()
+        run: |
+          # 把编出来的代理相关 .apk 收集起来单独上传，便于重装/升版。
+          #
+          # 现状（2026-10-11 起）：代理只保留 daed，且已编入固件镜像，
+          # 所以这里能收集到的只是 daed / luci-app-daede / v2ray-geoip / v2ray-geosite，
+          # 都是镜像内已有的包 —— 此 artifact 仅供重装或升版使用。
+          # （yq 原本是 Nikki 的依赖，Nikki 移除后已不再编译。）
+          #
+          # ⚠️ 2026-10-15 修复：原来 `for pat in \` 之后有一行**空行**，续行反斜杠
+          #    接上空行等于语句在此结束，下一行的 pattern 变成独立命令 →
+          #    `syntax error near unexpected token '"bin/packages/...apk"'` →
+          #    该步骤退出码 2 → 整个 job 失败 → Create Release 被跳过（10-14 两条线都因此没出 Release）。
+          #    续行后面必须**直接**跟第一个 pattern，不能有空行。
+          mkdir -p proxy-pkgs
+          shopt -s nullglob
+          for pat in \
+            "bin/packages/*/*/sing-box-*.apk" \
+            "bin/packages/*/*/homeproxy-*.apk" \
+            "bin/packages/*/*/luci-app-homeproxy-*.apk" \
+            "bin/packages/*/*/luci-i18n-homeproxy-*.apk" \
+            "bin/packages/*/*/dae-*.apk" \
+            "bin/packages/*/*/daed-*.apk" \
+            "bin/packages/*/*/luci-app-daede-*.apk" \
+            "bin/packages/*/*/luci-i18n-daede-*.apk" \
+            "bin/packages/*/*/v2ray-geoip-*.apk" \
+            "bin/packages/*/*/v2ray-geosite-*.apk" \
+            "bin/packages/*/*/yq-*.apk" \
+            "bin/packages/*/*/kmod-dummy-*.apk" \
+            "bin/packages/*/*/kmod-netlink-diag-*.apk" ; do
+            for f in $pat; do
+              [ -f "$f" ] && cp -v "$f" proxy-pkgs/
+            done
+          done
+          echo "== 收集到的代理相关包 =="
+          ls -la proxy-pkgs/ || true
+          du -sh proxy-pkgs/ 2>/dev/null || true
+
+      - name: Upload proxy packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: xr1710g-proxy-packages
+          path: proxy-pkgs/*
+          if-no-files-found: warn
+          retention-days: 30
+        if: always()
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: gemtek-${{ inputs.config_seed }}-firmware
+          name: xr1710g-firmware
           path: |
             build.log
-            build-verbose.log
             bin/targets/airoha/an7581/*.itb
-            bin/targets/airoha/an7581/*manifest
+            bin/targets/airoha/an7581/*.manifest
             bin/targets/airoha/an7581/config.buildinfo
             bin/targets/airoha/an7581/feeds.buildinfo
+            bin/targets/airoha/an7581/profiles.json
             bin/targets/airoha/an7581/version.buildinfo
             bin/targets/airoha/an7581/sha256sums
           retention-days: 30
         if: always()
 
       - name: Build release body
-        if: github.event.inputs.release_type != 'none'
+        if: github.event_name == 'push' || github.event.inputs.release_type != 'none'
         id: release_body
         env:
           RELEASE_NOTES: ${{ github.event.inputs.release_notes }}
@@ -191,18 +353,20 @@ jobs:
           } >> $GITHUB_OUTPUT
 
       - name: Create Release
-        if: github.event.inputs.release_type != 'none'
+        if: github.event_name == 'push' || github.event.inputs.release_type != 'none'
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ format('{0}-{1}', steps.version.outputs.date, steps.version.outputs.repo_commit) }}
-          name: ${{ format('{0} - Gemtek {1} Build ({2})', steps.version.outputs.date, steps.version.outputs.device_model, steps.version.outputs.repo_commit) }}
+          name: ${{ format('ImmortalWrt for XR1710G {0}', steps.version.outputs.build_id) }}
           body: ${{ steps.release_body.outputs.body }}
           draft: false
           prerelease: ${{ github.event.inputs.release_type == 'prerelease' }}
           files: |
             bin/targets/airoha/an7581/*.itb
+            bin/targets/airoha/an7581/*.manifest
             bin/targets/airoha/an7581/config.buildinfo
             bin/targets/airoha/an7581/feeds.buildinfo
+            bin/targets/airoha/an7581/profiles.json
             bin/targets/airoha/an7581/version.buildinfo
             bin/targets/airoha/an7581/sha256sums
         env:

@@ -1,0 +1,448 @@
+name: Build XG2010G Firmware
+# 与 build-firmware.yml（XR1710G）相互独立：
+#   - 种子配置用 2010.config，定制开关用 custom/config.fragment.2010
+#   - 产物名 / Release tag / Release 标题都带 XG2010G，避免与 1710 撞车
+#   - 不使用 OpenClash feed 与 mihomo 内核（代理只走 daed）
+# 定制文件：custom/config.fragment.2010、custom/feeds.conf.2010、custom/files-2010/
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_type:
+        description: 'Release Type'
+        required: true
+        default: 'release'
+        type: choice
+        options:
+          - none
+          - release
+          - prerelease
+      release_notes:
+        description: 'Release Notes'
+        required: false
+  push:
+    branches:
+      - master
+    paths:
+      - '2010.config'
+      - 'custom/config.fragment.2010'
+      - 'custom/feeds.conf.2010'
+      - 'custom/files-2010/**'
+      - 'custom/files/**'
+      - '.github/workflows/build-2010.yml'
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+concurrency:
+  group: xg2010g-build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Add Aurora theme package
+        run: |
+          # Aurora 主题的 Makefile 在仓库根目录，而 luci.mk 是用「目录名」推导包名的
+          # （LUCI_NAME?=$(notdir ${CURDIR})）。所以必须克隆到 package/luci-theme-aurora，
+          # 否则包名会变成 "aurora"，CONFIG_PACKAGE_luci-theme-aurora 就不会生效。
+          # 这也是主题作者 README 里给出的官方做法。
+          rm -rf package/luci-theme-aurora
+          git clone --depth 1 --branch master \
+            https://github.com/eamonxg/luci-theme-aurora.git package/luci-theme-aurora
+          echo "== Aurora 主题版本 =="
+          grep -E '^(PKG_VERSION|PKG_RELEASE):=' package/luci-theme-aurora/Makefile
+          echo "== 静态资源目录（决定 mediaurlbase）=="
+          ls -d package/luci-theme-aurora/htdocs/luci-static/*/ 2>/dev/null || true
+
+      - name: Generate build version
+        id: version
+        run: |
+          git remote add upstream https://github.com/immortalwrt/immortalwrt.git 2>/dev/null || true
+          git remote set-url upstream https://github.com/immortalwrt/immortalwrt.git
+          git fetch --no-tags upstream master
+
+          build_date=$(TZ=Asia/Shanghai date +'%Y%m%d')
+          repo_commit=$(git rev-parse --short=8 HEAD)
+          upstream_base=$(git merge-base HEAD upstream/master)
+          upstream_commit=$(git rev-parse --short=8 "$upstream_base")
+          build_id="${build_date}-${repo_commit}-${upstream_commit}"
+
+          echo "date=$build_date" >> $GITHUB_OUTPUT
+          echo "build_id=$build_id" >> $GITHUB_OUTPUT
+          echo "repo_commit=$repo_commit" >> $GITHUB_OUTPUT
+          echo "upstream_commit=$upstream_commit" >> $GITHUB_OUTPUT
+          echo "Build version: ImmortalWrt for XG2010G ${build_id}"
+
+      - name: Setup build environment
+        run: |
+          sudo apt update
+          # llvm 提供未加版本号的 llc/opt/llvm-dis/llvm-strip（bpf.mk 需要）
+          sudo apt install -y build-essential clang llvm gcc g++ binutils bzip2 gawk gettext git libncurses-dev libssl-dev python3 python3-setuptools rsync unzip wget xsltproc zlib1g-dev file which perl sed make
+          # 兜底：若未版本化工具不存在，就用最新版本建软链（bpf.mk 里 LLVM_VER 为空时会找这些名字）
+          for t in clang llc opt llvm-dis llvm-strip; do
+            if ! command -v "$t" >/dev/null 2>&1; then
+              src="$(ls -1 /usr/bin/$t-* 2>/dev/null | sort -V | tail -1)"
+              [ -n "$src" ] && sudo ln -sf "$src" "/usr/bin/$t" && echo "linked /usr/bin/$t -> $src"
+            fi
+          done
+          command -v clang llc opt llvm-dis llvm-strip || true
+
+      - name: Install feeds
+        run: |
+          # 2010 专用 feed（kenzok8/openwrt-daede）放在最前面，
+          # 保证同名包优先取它的版本
+          if [ -f custom/feeds.conf.2010 ]; then
+            cat custom/feeds.conf.2010 > feeds.conf
+            printf '\n' >> feeds.conf   # 防御：源文件末尾可能没有换行，否则会和下一行拼在一起
+          else
+            : > feeds.conf
+          fi
+          cat feeds.conf.default >> feeds.conf
+          echo "== feeds.conf =="
+          cat feeds.conf
+          echo "== feeds.conf 预检 =="
+          # scripts/feeds 剥注释用的是 s/#.+$//，.+ 要求 # 后至少一个字符。
+          # 所以「裸 # 行」（整行只有一个 #）不会被当成注释，会触发
+          # "Syntax error in feeds.conf, line N"。这里提前拦住，给出可读的报错。
+          if grep -n '^#$' feeds.conf; then
+            echo "::error::feeds.conf 存在裸 # 行（上面已列出行号），请改成空行，或 # 后带文字"
+            exit 1
+          fi
+          # 非空、非注释的有效行必须都以 src- 开头
+          bad=$(grep -vn '^[[:space:]]*\(#.*\)\?$' feeds.conf | grep -v '^[0-9]*:src-' || true)
+          if [ -n "$bad" ]; then
+            echo "::error::feeds.conf 存在非 src- 开头的有效行："
+            echo "$bad"
+            exit 1
+          fi
+          echo "  feeds.conf 预检通过"
+
+          # ── 剔除上游引入的不可用 feed：pushbot ──
+          # feeds.conf.default 里有：
+          #   src-git pushbot https://github.com/zzsj0928/luci-app-pushbot.git
+          # （上游提交 ea5416bb26「新增推送机器人应用源」引入）
+          # 但该仓库是**单个 LuCI 应用的包仓库**，根 Makefile 是包 Makefile
+          # （PKG_NAME:=luci-app-pushbot + include $(TOPDIR)/rules.mk），
+          # **不是 feed 索引 Makefile**。scripts/feeds 把它当索引解析时报：
+          #   feeds/pushbot.tmp/info/.files-packageinfo.mk:1: *** target pattern contains no '%'.  Stop.
+          # 导致整个 Install feeds 失败（构建在 1 分多钟就挂掉）。
+          # 本仓库不需要该应用（推送用 luci-app-wechatpush，且已关闭），直接剔除。
+          if grep -q '^src-git pushbot ' feeds.conf; then
+            grep -v '^src-git pushbot ' feeds.conf > feeds.conf.tmp
+            mv feeds.conf.tmp feeds.conf
+            echo "  已剔除不可用的 pushbot feed"
+          fi
+
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+          bash scripts/fix-stale-golang-host.sh
+
+      - name: Drop duplicate dae/daed from other feeds
+        run: |
+          # immortalwrt/packages 里也有同名 dae/daed，会与 kenzok8 的版本冲突。
+          # 这里把其它 feed 的副本删掉，只保留 daede feed 的版本。
+          shopt -s nullglob
+          removed=0
+          for d in package/feeds/*/daed package/feeds/*/dae; do
+            case "$d" in
+              package/feeds/daede/*) echo "保留: $d"; continue ;;
+            esac
+            echo "移除重复包: $d"
+            rm -rf "$d"
+            removed=$((removed + 1))
+          done
+          echo "移除数量: $removed"
+          echo "== daede feed 安装情况 =="
+          ls -l package/feeds/daede/ 2>/dev/null || echo "（没有找到 package/feeds/daede）"
+      - name: Apply feed patches
+        run: |
+          if [ -f scripts/apply-feed-patches.sh ]; then
+            FEED_PATCHES_STRICT=1 bash scripts/apply-feed-patches.sh
+          fi
+
+      - name: Configure (2010.config + custom fragment)
+        run: |
+          cp 2010.config .config
+          if [ -f custom/config.fragment.2010 ]; then
+            cat custom/config.fragment.2010 >> .config
+          fi
+          VERSION_DIST='immortalwrt' \
+          VERSION_NUMBER='${{ steps.version.outputs.build_id }}' \
+          BUILD_DATE='${{ steps.version.outputs.date }}' \
+          BUILD_ID='${{ steps.version.outputs.build_id }}' \
+          REPO_COMMIT='${{ steps.version.outputs.repo_commit }}' \
+          UPSTREAM_COMMIT='${{ steps.version.outputs.upstream_commit }}' \
+          VERSION_CODE='${{ steps.version.outputs.build_id }}' \
+          bash scripts/set-build-version.sh .config
+          make defconfig
+          echo "== 目标机型 =="
+          grep -E 'CONFIG_TARGET_(airoha_an7581_DEVICE|DEVICE_airoha_an7581_DEVICE).*=y' .config || true
+          echo "== IPTV / DDNS =="
+          grep -E 'CONFIG_PACKAGE_(rtp2httpd|luci-app-rtp2httpd|luci-i18n-rtp2httpd-zh-cn|msd_lite|luci-app-msd_lite|udpxy|luci-app-udpxy|ddns-go|luci-app-ddns-go|ddns-scripts|luci-app-ddns)(=| is not set)' .config | sort || true
+          echo "== 透明代理 =="
+          grep -E 'CONFIG_PACKAGE_(luci-app-homeproxy|luci-i18n-homeproxy-zh-cn|homeproxy|sing-box|luci-app-nikki|luci-i18n-nikki-zh-cn|nikki|mihomo-meta|luci-app-daede|luci-app-daede_daed|luci-app-daede_dae|luci-app-daed|daed|daed-geoip|daed-geosite|kmod-dummy|pbr|luci-app-pbr)(=| is not set)' .config | sort || true
+          echo "== 主题 =="
+          grep -E 'CONFIG_PACKAGE_(luci-theme-aurora|luci-theme-glass|luci-theme-argon|luci-app-argon-config|luci-app-openclash)(=| is not set)' .config | sort || true
+          echo "== 语音 =="
+          grep -E 'CONFIG_PACKAGE_(asterisk|asterisk-chan-en75xx|airoha-voice-ctl)(=| is not set)' .config | sort || true
+          echo "== dae/daed 相关内核开关 =="
+          grep -E 'CONFIG_KERNEL_(DEBUG_INFO_BTF|DEBUG_INFO_REDUCED|BPF_EVENTS|BPF_STREAM_PARSER|XDP_SOCKETS)' .config || true
+          echo "== BPF 工具链 =="
+          grep -E '^CONFIG_(DEVEL|BPF_TOOLCHAIN_HOST|BPF_TOOLCHAIN_NONE|USE_LLVM_HOST)=' .config || true
+
+      - name: Prepare custom files overlay
+        run: |
+          mkdir -p files
+          cp -a custom/files/. files/
+          if [ -d custom/files-2010 ]; then
+            cp -a custom/files-2010/. files/
+          fi
+          # 兜底修正可执行位：Windows 上 git 的 core.fileMode 默认为 false，
+          # 本地新增脚本时容易丢掉 100755，脚本进固件后会「不可执行」而静默失效。
+          # 用 git 索引里记录的模式为准，只对索引标记为 100755 的文件补 chmod。
+          git ls-files -s custom/files custom/files-2010 2>/dev/null \
+            | awk '$1 == "100755" { p = $4; sub(/^custom\/files-2010\//, "files/", p); sub(/^custom\/files\//, "files/", p); print p }' \
+            | while read -r f; do [ -f "$f" ] && chmod 755 "$f"; done
+          echo "== 可执行文件（应为 755）=="
+          find files -type f -perm /111 -exec ls -l {} + 2>/dev/null || true
+          echo "== 全部覆盖文件 =="
+          find files -type f | sort
+
+      - name: Download sources
+        run: make download -j$(nproc)
+
+      - name: Build Firmware
+        shell: bash
+        run: |
+          # [custom] 2026-11-02 加 V=w，与 build-firmware.yml（XR1710G）保持一致。
+          # 原因：OpenWrt 默认非 verbose 时，子 make 的 stdout/stderr 被 include/verbose.mk
+          # 的 SILENT 整体丢进 /dev/null：
+          #   SILENT:=/dev/null $(if $(findstring w,$(OPENWRT_VERBOSE)),,2>&1)
+          #   SUBMAKE=cmd() { $(SILENT) $(MAKE) -s "$@" ... } 8>&1 9>&2
+          # 只有 OpenWrt 自己经 MESSAGE/ERROR_MESSAGE 宏（写 >&8 / >&9）输出的内容可见，
+          # gcc/ld 这类外部工具的报错走 fd2，会被一起吞掉 —— 表现就是 build.log 只剩
+          # 「ERROR: package/xxx failed to build」一行：11-01 的 XG2010G 日志只有 280 行，
+          # 完全看不到 python3 的 ffi.h 报错；而 XR1710G 加了 V=w 后一次就定位到了。
+          # V=w 的语义（include/verbose.mk）：findstring w 命中 → 不追加 2>&1，
+          # 于是 SILENT 只剩 >/dev/null，**保留 stderr**、仅丢弃命令回显。
+          # 不用 V=s：全量 verbose 会把每条编译命令都打进日志，几十万行。
+          make -j$(nproc) world V=w 2>&1 | tee build.log
+
+      - name: Check build status
+        if: always()
+        run: |
+          if [ -f build.log ]; then
+            bash scripts/summarize-build-errors.sh build.log || true
+            tail -100 build.log
+          fi
+          ls -la bin/targets/airoha/an7581/ 2>/dev/null || echo "No files found in an7581 directory"
+          echo "== 编译期致命错误（V=w 已保留 stderr，直接查 build.log）=="
+          # [custom] 2026-11-02：删掉对 logs/ 目录的依赖。
+          # OpenWrt 只在 `make package/<pkg>/compile V=s` 时才写
+          # logs/package/<pkg>/compile.txt，`make world` 根本不生成该目录 ——
+          # 11-01 那次构建的 Upload build logs 因此报
+          #   "No files were found with the provided path: logs/"
+          # 并且按 compile.txt 找根因的思路从源头上就是空的。
+          # 现在 V=w 已让子 make 的 stderr 进入 build.log，直接在这里定位。
+          grep -n "fatal error:" build.log 2>/dev/null | head -20 || true
+          echo "== fatal error 上下文 =="
+          grep -n -B2 -A10 "fatal error:" build.log 2>/dev/null | head -60 || true
+          echo "== make 的 Error 行（尾部）=="
+          grep -n -E "make(\[[0-9]+\])?: \*\*\* .*Error [0-9]" build.log 2>/dev/null | tail -15 || true
+
+      - name: Report image size
+        if: always()
+        run: |
+          # IMAGE_SIZE := 131072k（128 MiB）—— 上游 e46600c9cc 已从 64 MiB 提高。
+          # 超限时 check-size 会直接删掉 ITB，构建仍"成功"，所以这里要显式核对。
+          #
+          # ⚠️ 2026-10-15 修复：原 limit 写作 65536（按字节解释只有 64 KiB），
+          #    告警阈值写作 62914（62914560/1000），两者都是旧的 64 MiB 口径且单位错位，
+          #    导致日志打出「占用: 78532.9%  余量: -49.02 MiB」并每次都误报超限。
+          itb="$(ls bin/targets/airoha/an7581/*sysupgrade.itb 2>/dev/null | head -1)"
+          if [ -z "$itb" ]; then
+            echo "::error::没有生成 sysupgrade.itb —— 极可能是超出 IMAGE_SIZE(128 MiB) 被 check-size 删除。"
+            echo "  处理：精简 custom/config.fragment.2010 里编入镜像的包后重编。"
+            exit 1
+          fi
+          size=$(stat -c %s "$itb")
+          mib=$(awk -v s="$size" 'BEGIN{printf "%.2f", s/1048576}')
+          limit=134217728   # 128 MiB，单位：字节（与 IMAGE_SIZE 一致）
+          echo "ITB: $itb"
+          echo "大小: ${mib} MiB / 上限 128.00 MiB"
+          awk -v s="$size" -v l="$limit" 'BEGIN{
+            pct = s/l*100;
+            printf "占用: %.1f%%  余量: %.2f MiB\n", pct, (l-s)/1048576;
+          }'
+          if [ "$size" -gt 125829120 ]; then   # 120 MiB
+            echo "::warning::镜像已超过 120 MiB，余量不足 8 MiB，后续再加包会超限。"
+          fi
+
+      - name: Verify firmware content
+        if: always()
+        run: |
+          manifest="$(ls bin/targets/airoha/an7581/*.manifest 2>/dev/null | head -1)"
+          if [ -z "$manifest" ]; then
+            echo "::error::没有生成 manifest，构建未产出镜像"
+            exit 1
+          fi
+          echo "manifest: $manifest"
+          echo "== 镜像内软件包总数：$(grep -c . "$manifest") =="
+          echo "== 应当存在的包 =="
+          for p in \
+            rtp2httpd luci-app-rtp2httpd \
+            ddns-go luci-app-ddns-go \
+            luci-app-daede daed v2ray-geoip v2ray-geosite \
+            luci-theme-aurora \
+            asterisk asterisk-chan-en75xx airoha-voice-ctl ; do
+            if grep -q "^$p " "$manifest"; then echo "  [OK]  $p"; else echo "  [!!]  $p 不在镜像里"; fi
+          done
+          echo "== 应当缺席的包（出现说明没关掉）=="
+          echo "   注：homeproxy / sing-box / nikki / mihomo 已于 2026-10-11 从 config.fragment.2010"
+          echo "       彻底移除（not set），既不编入镜像也不产出 .apk；OpenClash 已于 2026-10-06 移除。"
+          if grep -E '^(msd_lite|luci-app-msd_lite|luci-i18n-msd_lite-zh-cn|udpxy|luci-app-udpxy|luci-theme-glass|luci-theme-argon|luci-app-argon-config|luci-app-openclash|luci-i18n-openclash-zh-cn|luci-app-daed|luci-i18n-daed-zh-cn|daed-geoip|daed-geosite|pbr|luci-app-pbr|ddns-scripts|ddns-scripts-services|luci-app-ddns|luci-app-passwall.*|homeproxy|luci-app-homeproxy|luci-i18n-homeproxy-zh-cn|sing-box|nikki|luci-app-nikki|luci-i18n-nikki-zh-cn|mihomo|mihomo-meta|mihomo-alpha) ' "$manifest"; then
+            echo "::warning::上面这些包仍在镜像里，检查 config.fragment.2010"
+          else
+            echo "  （无，符合预期）"
+          fi
+          echo "== 代理相关包（用于 overlay 后装）是否已产出 .apk =="
+          # 2026-10-15：原列表含 sing-box/homeproxy/luci-app-homeproxy/yq，这些包现在
+          # 根本不编译，每次构建都会打 4 条 [!!] 假告警。已收敛为实际会产出的包。
+          for pat in daed luci-app-daede v2ray-geoip v2ray-geosite; do
+            n=$(find bin/packages -name "$pat-*.apk" 2>/dev/null | wc -l)
+            if [ "$n" -gt 0 ]; then echo "  [OK]  $pat  ($n 个 .apk)"; else echo "  [!!]  $pat 没有产出 .apk"; fi
+          done
+          echo "== 体积预算（128 MiB 上限，上游 e46600c9cc 已提高）=="
+          itb="$(ls bin/targets/airoha/an7581/*sysupgrade.itb 2>/dev/null | head -1)"
+          if [ -n "$itb" ]; then
+            echo "  ITB: $(stat -c %s "$itb") B = $(awk -v s="$(stat -c %s "$itb")" 'BEGIN{printf "%.2f", s/1048576}') MiB"
+          else
+            echo "  （无 ITB）"
+          fi
+          echo "== 语音相关（确认保留/去掉的分布）=="
+          grep -E '^(asterisk|airoha-voice-ctl)' "$manifest" | sort || echo "  （无语音包）"
+
+      - name: Collect proxy packages (for overlay install)
+        if: always()
+        run: |
+          # 把编出来的代理相关 .apk 收集起来单独上传，便于重装/升版。
+          #
+          # 现状（2026-10-11 起）：代理只保留 daed，且已编入固件镜像，
+          # 所以这里能收集到的只是 daed / luci-app-daede / v2ray-geoip / v2ray-geosite，
+          # 都是镜像内已有的包 —— 此 artifact 仅供重装或升版使用。
+          # （yq 原本是 Nikki 的依赖，Nikki 移除后已不再编译。）
+          #
+          # ⚠️ 2026-10-15 修复：原来 `for pat in \` 之后有一行**空行**，续行反斜杠
+          #    接上空行等于语句在此结束，下一行的 pattern 变成独立命令 →
+          #    `syntax error near unexpected token '"bin/packages/...apk"'` →
+          #    该步骤退出码 2 → 整个 job 失败 → Create Release 被跳过（10-14 两条线都因此没出 Release）。
+          #    续行后面必须**直接**跟第一个 pattern，不能有空行。
+          mkdir -p proxy-pkgs
+          shopt -s nullglob
+          for pat in \
+            "bin/packages/*/*/sing-box-*.apk" \
+            "bin/packages/*/*/homeproxy-*.apk" \
+            "bin/packages/*/*/luci-app-homeproxy-*.apk" \
+            "bin/packages/*/*/luci-i18n-homeproxy-*.apk" \
+            "bin/packages/*/*/dae-*.apk" \
+            "bin/packages/*/*/daed-*.apk" \
+            "bin/packages/*/*/luci-app-daede-*.apk" \
+            "bin/packages/*/*/luci-i18n-daede-*.apk" \
+            "bin/packages/*/*/v2ray-geoip-*.apk" \
+            "bin/packages/*/*/v2ray-geosite-*.apk" \
+            "bin/packages/*/*/yq-*.apk" \
+            "bin/packages/*/*/kmod-dummy-*.apk" \
+            "bin/packages/*/*/kmod-netlink-diag-*.apk" ; do
+            for f in $pat; do
+              [ -f "$f" ] && cp -v "$f" proxy-pkgs/
+            done
+          done
+          echo "== 收集到的代理相关包 =="
+          ls -la proxy-pkgs/ || true
+          du -sh proxy-pkgs/ 2>/dev/null || true
+          echo
+          echo "== 说明 =="
+          echo "  daed / luci-app-daede / v2ray-geoip / v2ray-geosite 均已编入固件镜像，"
+          echo "  此处的 .apk 仅供重装或升版使用："
+          echo "    apk add --allow-untrusted ./daed-*.apk ./luci-app-daede-*.apk"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: xg2010g-firmware
+          path: |
+            build.log
+            bin/targets/airoha/an7581/*.itb
+            bin/targets/airoha/an7581/*.manifest
+            bin/targets/airoha/an7581/config.buildinfo
+            bin/targets/airoha/an7581/feeds.buildinfo
+            bin/targets/airoha/an7581/profiles.json
+            bin/targets/airoha/an7581/version.buildinfo
+            bin/targets/airoha/an7581/sha256sums
+          retention-days: 30
+        if: always()
+
+      - name: Upload proxy packages
+        uses: actions/upload-artifact@v7
+        with:
+          name: xg2010g-proxy-packages
+          path: proxy-pkgs/*
+          if-no-files-found: warn
+          retention-days: 30
+        if: always()
+
+      - name: Build release body
+        if: github.event_name == 'push' || github.event.inputs.release_type != 'none'
+        id: release_body
+        env:
+          RELEASE_NOTES: ${{ github.event.inputs.release_notes }}
+        run: |
+          {
+            printf '%s\n' "$RELEASE_NOTES"
+            echo ""
+            echo "---"
+            echo ""
+            echo "XG2010G（Gemtek XG2010G / Airoha AN7581）专属构建："
+            echo "- IPTV：rtp2httpd（组播转单播 + RTSP 时移回看 + FCC 快速换台）"
+            echo "- DDNS：ddns-go"
+            echo "- 透明代理：只采用 daed（luci-app-daede + daed，已编入固件）"
+            echo "  homeproxy(sing-box) / Nikki(mihomo) 已于 2026-10-11 从配置中彻底移除（not set），"
+            echo "  既不编入镜像也不产出 .apk；相关 feed 与 OpenClash 残留已一并清理。"
+            echo "- 主题：Aurora"
+            echo "- 语音：保留运营商语音通话（Asterisk + asterisk-chan-en75xx），去掉本机电话主机功能"
+            echo "- OpenClash：不使用，已移除全部残留"
+          } > /tmp/release_body.md
+          {
+            echo "body<<EOF"
+            cat /tmp/release_body.md
+            echo "EOF"
+          } >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        if: github.event_name == 'push' || github.event.inputs.release_type != 'none'
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ format('xg2010g-{0}-{1}', steps.version.outputs.date, steps.version.outputs.repo_commit) }}
+          name: ${{ format('ImmortalWrt for XG2010G {0}', steps.version.outputs.build_id) }}
+          body: ${{ steps.release_body.outputs.body }}
+          draft: false
+          prerelease: ${{ github.event.inputs.release_type == 'prerelease' }}
+          files: |
+            bin/targets/airoha/an7581/*.itb
+            bin/targets/airoha/an7581/*.manifest
+            bin/targets/airoha/an7581/config.buildinfo
+            bin/targets/airoha/an7581/feeds.buildinfo
+            bin/targets/airoha/an7581/profiles.json
+            bin/targets/airoha/an7581/version.buildinfo
+            bin/targets/airoha/an7581/sha256sums
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

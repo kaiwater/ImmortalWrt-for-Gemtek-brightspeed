@@ -1,0 +1,21 @@
+# XG2010G（2010.config）专用 feed
+# 注意：本文件里不要出现「裸 # 行」（整行只有一个 #）。OpenWrt 的 scripts/feeds
+# 用 s/#.+$// 剥注释，.+ 要求 # 后至少一个字符，裸 # 行会被判为语法错误
+# （报 "Syntax error in feeds.conf, line N"）。分隔请用空行，或 # 后面带文字。
+
+# 放在 feeds.conf 最前面，保证与其它 feed 同名的包优先取这里的版本
+# （build-2010.yml 里还会把其它 feed 的 dae / daed 副本删掉，避免同名冲突）
+
+# 注意：Aurora 主题不在这里，见 .github/workflows/build-2010.yml 的
+# "Add Aurora theme package" 步骤（它的 Makefile 在仓库根目录，
+# 必须克隆到 package/luci-theme-aurora 才能得到正确的包名）。
+
+# kenzok8/openwrt-daede：dae 内核 + daed（带 Web 面板）+ luci-app-daede 统一界面
+src-git daede https://github.com/kenzok8/openwrt-daede.git;main
+
+# 注：nikki feed（nikkinikki-org/OpenWrt-nikki）已于 2026-10-11 移除。
+# 它同时提供 nikki、luci-app-nikki 与 mihomo 内核（mihomo-meta）；既然确定不再
+# 使用 Nikki，保留这个 feed 只会让它继续出现在设备的 distfeeds.list 里、
+# 每次 apk update 报一条 404（任何镜像上都没有它的二进制索引）。
+# 该 feed 的包在 custom/config.fragment.2010 里早已是 not set，移除不改变镜像内容。
+# 它的仓库只有 main / dependabot-* 分支，不能用其 feed.sh —— 现在一并作废。

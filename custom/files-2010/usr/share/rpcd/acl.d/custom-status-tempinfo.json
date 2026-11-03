@@ -1,0 +1,10 @@
+{
+	"custom-status-tempinfo": {
+		"description": "Grant access to CPU info and temperature display used by the status overview (luci-mod-status/include/10_system.js).",
+		"read": {
+			"ubus": {
+				"luci": [ "getCPUInfo", "getTempInfo" ]
+			}
+		}
+	}
+}
