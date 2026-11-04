@@ -114,6 +114,22 @@ rsn_override_pairwise_2=GCMP-256
 也就是说客户端侧确实存在支持 BP 的设备（A），AP 也把 bit 84 置了，但 RSNE 缺 GMCS
 这一环仍然让 BP 不可验证。
 
+### 3.6 交叉验证：闭源 `mt_wifi` 栈同样缺 GMCS
+
+同一局域网内另一台设备（MT7992 + MTK 闭源 `mt_wifi` 驱动，hostapd v2.12-devel）
+提供了独立对照：
+
+- 12 个 BSS 全部配置了 `group_mgmt_cipher=AES-128-CMAC` 与 `beacon_prot=1`；
+- **完全没有启用** `rsn_override_*`；
+- Beacon 同样携带 MMIE（16 字节），IPN 递增；
+- RSNE 同样只有 20 字节（纯 SAE）或 28 字节（`sae-mixed`），结尾没有 GMCS。
+
+这排除了「RSN Override 路径导致 GMCS 丢失」的假设，把共同点收敛到 **hostapd 2.12 本身**
+（两套驱动、两种加密配置、有无 override、有无 MLO，都出现同一现象）。
+
+同一台设备上还能读到每个 STA 的 `ext_capab`，其中 3 台客户端里恰好 1 台 bit 84 = 1，
+与被动监听侧统计到的 `1/3` 完全一致，进一步确认两侧观测口径一致。
+
 ## 4. 分析
 
 1. **GMCS 是客户端选择 BIP 算法的唯一来源。** MMIE 里只有 KeyID、IPN 和 MIC，
@@ -131,19 +147,15 @@ rsn_override_pairwise_2=GCMP-256
 
 ## 5. 候选根因（待定位）
 
-按可能性排序，需要用代码或对照实验排除：
+交叉验证后，候选范围已收窄：
 
-1. **hostapd 的 RSNE 生成路径**：本构建启用了 `rsn_override_*`（RSN Override）。
-   该补丁会改写 `wpa_write_rsn_ie()` 的输出，怀疑在 override 生效时漏写了 GMCS。
-2. **`group_mgmt_cipher` 未真正传入 BSS 上下文**：conf 文件里有，但 BSS 结构体里为 0。
-3. **驱动/固件重建 RSNE**：mt76 把 beacon 模板下发给固件后，固件若重写 RSN IE 也会丢字段。
+1. **hostapd 2.12 的 RSNE 生成路径**（最可能）。两套驱动共用同一 hostapd 版本，
+   且与 `rsn_override` 无关；`group_mgmt_cipher` 在 conf 中被正确解析，但没有写进 RSNE。
+2. `group_mgmt_cipher` 未进入 BSS 上下文：conf 文件有，BSS 结构体里可能为 0。
+3. 驱动/固件重写 RSNE：两套完全不同的驱动都重写同一字段的可能性较低，但不能排除。
 
-**判定方法**：在同一台设备上对比不同配置的 VAP。
-
-- 关掉 `rsn_override_*`（或建一个不带 override 的测试 VAP）后 GMCS 是否出现？
-  - 出现 → 问题在 RSN Override 路径；
-  - 仍不出现 → 问题在 hostapd 基础路径或驱动。
-- 当前已确认普通 5G VAP 与 MLO link **都缺**，所以不是 MLD 专属路径的问题。
+**下一步判定**：在同一硬件上换用未经 MTK 修改的上游 hostapd 2.12 构建，观察 GMCS 是否
+出现。若出现，问题在 hostapd 补丁集；若仍缺失，再考虑驱动侧。
 
 ## 6. 影响范围
 
