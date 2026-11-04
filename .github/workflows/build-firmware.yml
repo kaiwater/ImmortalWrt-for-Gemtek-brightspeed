@@ -15,7 +15,9 @@ on:
       - 'custom/config.fragment'
       - 'custom/feeds.conf.custom'
       - 'custom/files/**'
-      - '.github/workflows/build-firmware.yml'
+      # [custom] 2026-11-04：不再把 workflow 自身列入触发路径。
+      # 改 CI/文档不影响镜像内容，没必要为此跑数小时构建；要验证 workflow
+      # 改动请手动 workflow_dispatch。changelog/** 同样不触发。 
   workflow_dispatch:
     inputs:
       config_seed:
@@ -378,9 +380,51 @@ jobs:
         id: release_body
         env:
           RELEASE_NOTES: ${{ github.event.inputs.release_notes }}
+          BUILD_ID: ${{ steps.version.outputs.build_id }}
+          REPO_COMMIT: ${{ steps.version.outputs.repo_commit }}
+          UPSTREAM_COMMIT: ${{ steps.version.outputs.upstream_commit }}
         run: |
           {
-            printf '%s\n' "$RELEASE_NOTES"
+            if [ -n "$RELEASE_NOTES" ]; then
+              printf '%s\n\n' "$RELEASE_NOTES"
+              echo "---"
+              echo ""
+            fi
+
+            echo "## 变更摘要"
+            echo ""
+            # [custom] 自动把上一个 release tag 之后新增/修改的 changelog 报告
+            # 摘进 Release 正文，避免每次都只发一个镜像、看不出这版改了什么。
+            prev="$(git describe --tags --abbrev=0 --match '20*' 2>/dev/null || true)"
+            if [ -n "$prev" ]; then
+              echo "对比范围：\`${prev}..${REPO_COMMIT}\`"
+              files="$(git diff --name-only "${prev}..HEAD" -- 'changelog/*.md' 2>/dev/null | grep -v 'changelog/README.md' || true)"
+            else
+              echo "首次发布，列出全部 changelog 报告。"
+              files="$(git ls-files 'changelog/*.md' | grep -v 'changelog/README.md' || true)"
+            fi
+            echo ""
+            if [ -z "$files" ]; then
+              echo "_本次没有新增 changelog 报告（仅重建或未改行为）。_"
+            else
+              for f in $files; do
+                [ -f "$f" ] || continue
+                echo "### $(basename "$f" .md)"
+                echo ""
+                # 每篇最多 120 行，避免 Release 正文过长
+                sed -n '1,120p' "$f"
+                echo ""
+                echo "---"
+                echo ""
+              done
+            fi
+            echo ""
+
+            echo "## 镜像信息"
+            echo ""
+            echo "- 版本：\`${BUILD_ID}\`"
+            echo "- 目标：\`airoha/an7581\` · profile \`gemtek_xr1710g\`（0x700000 原厂布局）"
+            echo "- 仓库提交：\`${REPO_COMMIT}\`，上游基线：\`${UPSTREAM_COMMIT}\`"
             echo ""
             echo "---"
             echo ""

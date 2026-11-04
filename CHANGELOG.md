@@ -5,7 +5,35 @@ ImmortalWrt 上游合并不逐项展开，仅记录会影响本设备构建或�
 
 单次变更的详细报告放在 [`changelog/`](changelog/README.md)，本文件只保留摘要与索引。
 
+## 2026-11-02
+
+### XR1710G 恢复 NCT7802 主板温度与风扇控制
+
+- `an7581-xr1710g.dts` 的 `&i2c0` 覆盖 compatible 为 `airoha,airoha-i2c`，
+  而该兼容项对应的树外驱动 `kmod-airoha-i2c` 已在 `993e4778fc` 删除，
+  导致 i2c0 控制器不 probe、NCT7802 不枚举：LuCI 风扇页主板温度恒为 0°C，
+  PWM 与转速也没有读数。
+- 删除该覆盖，保留 `an7581.dtsi` 的 `mediatek,mt7621-i2c`，由 in-tree 驱动绑定。
+- 实机验证（`20261102-87a4119c`）：`i2c-0` 枚举、`0-002e` nct7802、
+  主板 41.5°C、风扇 2269 RPM、`pwm1_enable=2` 自动曲线、400 kHz 时钟。
+- 只影响 XR1710G（0x700000）；XG2010G 与 `-ubi` 变体未改动。
+- 上游 PR：[#73](https://github.com/naoki66/ImmortalWrt-for-Gemtek-brightspeed/pull/73)（未合并）
+- 详细报告：[`changelog/2026-11-02-xr1710g-i2c-nct7802.md`](changelog/2026-11-02-xr1710g-i2c-nct7802.md)
+
+### 构建：回填 libffi、CI 缓存、同步分支修正
+
+- libffi 已从 `packages` feed 移入 ImmortalWrt 核心树，旧基线缺失该包，
+  python3 以 `--with-system-ffi` 编译时因找不到 `ffi.h` 失败；本仓库回填
+  `package/libs/libffi`（与上游一致，后续同步不冲突）。
+- CI 缓存改为在 Install feeds 之前 restore `dl/` 与 `.ccache`，并用
+  `always()` 保存，构建失败也能保留已下载源码与编译缓存。
+- `sync-upstream.yml` 改为推回当前运行分支；仓库默认分支设为 `naoki66-base`，
+  定时同步才真正更新构建分支。
+- 构建触发路径移除 `build-firmware.yml` 自身：纯 CI/文档改动不再触发数小时构建，
+  需要验证 workflow 时手动 dispatch。
+
 ## 2026-11-01
+
 
 ### mt7996 宣告 802.11 信标保护（Beacon Protection）能力
 
