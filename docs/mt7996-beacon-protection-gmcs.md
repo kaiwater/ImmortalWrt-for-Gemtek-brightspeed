@@ -1,12 +1,24 @@
-# MT7996 信标保护：Beacon 带 MMIE，但 RSNE 缺 Group Management Cipher Suite
+# MT799x 信标保护：Beacon 带 MMIE，但 RSNE 缺 Group Management Cipher Suite
 
 | 项 | 值 |
 | --- | --- |
 | 日期 | 2026-11-04 |
 | 分支 | `naoki66-base` |
 | 类型 | 现场缺陷报告（无代码改动） |
-| 适用设备 | `airoha-an7581-mt7996-board`（MT7996E，EHT160 + MLO） |
-| 状态 | 被动空口观测已确认现象；根因未定位到代码行 |
+| 适用设备 | `airoha-an7581-mt7996-board`（MT7996E，mt76）；另在 MT7992 + 闭源 `mt_wifi` 上复现 |
+| 状态 | 现象已确认；根因收敛到 hostapd 2.12，未定位到代码行；M3 路径未决 |
+
+> **结论摘要**
+>
+> - 两台设备（开源 mt76 / 闭源 mt_wifi）的 Beacon 都携带 MMIE，IPN 逐帧递增 →
+>   **AP 侧确实在用 BIGTK 计算 MIC**。
+> - 但 **Beacon 的 RSNE 里没有 Group Management Cipher Suite**，关联响应里干脆
+>   连 RSNE 都不带 → **明文路径没有告诉客户端该用哪个 BIP 算法**。
+> - M3 的 Key Data 里还有一份 AP 的 RSNE，它是加密的、无法观测；若该处补上了
+>   GMCS，客户端仍可能完成验证。因此本报告确认的是「明文通告缺失」，不是
+>   「客户端一定无法验证」。
+> - 两套驱动、两种加密配置、有无 MLO、有无 `rsn_override` 都复现 → 共同点收敛到
+>   **hostapd 2.12**。
 
 ---
 
@@ -17,7 +29,8 @@
 不再被 hostapd 静默清零。
 
 本次用第三方被动监听设备（802.11n 单频监听网卡，只收不发）做端到端核验，目的是确认
-"AP 真的在保护 beacon，客户端也真的能验证"。前半句成立，后半句不成立。
+"AP 真的在保护 beacon，客户端也真的能验证"。前半句成立；后半句在明文路径上不成立，
+加密路径（M3）无法观测。
 
 ## 2. 现象
 
@@ -29,8 +42,8 @@
 | RSNE 的 Group Management Cipher Suite | **缺失** |
 | hostapd 运行配置 | `group_mgmt_cipher=AES-128-CMAC`、`beacon_prot=1`、`ieee80211w=2` |
 
-也就是说：AP 侧确实在用 BIGTK 每帧重算 MIC，但空口上没有告诉客户端该用哪个 BIP
-算法，客户端拿到 MMIE 也无法验证。
+也就是说：AP 侧确实在用 BIGTK 每帧重算 MIC，但**明文空口上没有告诉客户端该用哪个
+BIP 算法**。客户端是否仍能通过 M3 的加密 Key Data 拿到该字段，本报告无法判定。
 
 ## 3. 证据
 
@@ -194,8 +207,8 @@ walk=01:8 46:5 2D:26 3D:22 DD:30 DD:26 5A:3 BF:12 C0:5 FF:39 FF:7 FF:2 FF:14
 ## 6. 影响范围
 
 - 所有 `beacon_prot=1` 的 VAP（2.4G / 5G / 6G / MLO link）。
-- 客户端侧：不支持 BP 的客户端（多数）完全无感；支持 BP 的客户端拿不到可验证的 MMIE，
-  等于 BP 没有实际防护效果。
+- 客户端侧：不支持 BP 的客户端（多数）完全无感；支持 BP 的客户端在明文路径上拿不到
+  BIP 算法，能否验证取决于 M3 是否补发该字段（未观测）。
 - 空口开销：每帧 beacon 多 18 字节（MMIE 2+16）。
 - 不影响关联、SAE、4-way 和数据面。
 
