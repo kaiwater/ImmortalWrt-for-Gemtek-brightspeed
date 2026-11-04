@@ -219,3 +219,9 @@ iw dev phy0-ap0 station dump
   整份日志里没有任何 libffi 编译记录。也就是说 `_ctypes` 在编译时找不到 libffi 头文件。
   需要先解决该构建问题（或让 `libffi` / `CONFIG_PACKAGE_libffi` 进入 staging），
   才能跑包含本补丁的构建并做实机验证。
+- **2026-11-04**：实机核验确认 `beacon_prot=1` 已生效——Beacon 里出现 MMIE（长度 16），
+  IPN 逐帧递增，说明 BIGTK 确实在参与每帧 MIC 计算。但空口 RSNE 里**没有**
+  Group Management Cipher Suite，客户端无法确定该用哪个 BIP 算法，因此无法验证 MMIE；
+  同设备的普通 5G VAP 与 MLO link 都是如此，配置里的 `group_mgmt_cipher=AES-128-CMAC`
+  没有体现到空口。现象、十六进制对照和影响面见
+  [`docs/mt7996-beacon-protection-gmcs.md`](../docs/mt7996-beacon-protection-gmcs.md)。
