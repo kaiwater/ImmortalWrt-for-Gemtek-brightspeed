@@ -226,3 +226,8 @@ iw dev phy0-ap0 station dump
   `group_mgmt_cipher=AES-128-CMAC` 没有体现到空口。M3 的加密 Key Data 是否补发该字段
   无法观测，因此结论限定为「明文通告缺失」。详见
   [`docs/mt7996-beacon-protection-gmcs.md`](../docs/mt7996-beacon-protection-gmcs.md)。
+- **2026-11-04 晚（勘误）**：上面「明文路径没有提供 BIP 算法」的判断**不成立**。
+  hostapd 对默认值 `group_mgmt_cipher=AES-128-CMAC` 会刻意省略 GMCS 字段，
+  而 802.11 规定该字段缺省时按 BIP-CMAC-128 处理，客户端解析时也会先填默认值再被
+  显式字段覆盖。所以 RSNE 里没有 GMCS 是**规范行为**，BP 可以正常验证。
+  详见 [`docs/mt7996-beacon-protection-gmcs.md`](../docs/mt7996-beacon-protection-gmcs.md) 第 11 节。
