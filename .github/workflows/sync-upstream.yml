@@ -99,7 +99,14 @@ jobs:
 
       - name: Push to origin
         if: steps.merge.outputs.changed == 'true'
-        run: git push origin HEAD:master
+        run: |
+          # [custom] 推回“当前运行分支”，而不是写死 master。
+          # 构建分支是 naoki66-base，同步也必须更新它，否则 base 分支永远拿不到
+          # 上游新提交。仓库默认分支已设为 naoki66-base，定时任务从该分支
+          # checkout、也推回该分支；手动 dispatch 到别的分支时同样只更新那个分支。
+          target="${GITHUB_REF_NAME}"
+          echo "push target: ${target}"
+          git push origin "HEAD:${target}"
 
       - name: Show result
         if: always()

@@ -6,7 +6,7 @@ name: Build XR1710G Firmware
 on:
   push:
     branches:
-      - master
+      - naoki66-base
     # [custom] 2026-10-04 加 paths 过滤：以前任何 push 到 master 都会触发 XR1710G 构建
     # 并发布 Release，导致只改 XG2010G（custom/*.2010、files-2010/、build-2010.yml）
     # 也会顺带跑一次 XR1710G。现在只在下面这些文件变化时触发。
