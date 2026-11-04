@@ -8,6 +8,14 @@
 | 适用设备 | `airoha-an7581-mt7996-board`（MT7996E，mt76）；另在 MT7992 + 闭源 `mt_wifi` 上复现 |
 | 状态 | 现象已确认；根因收敛到 hostapd 2.12，未定位到代码行；M3 路径未决 |
 
+> **⚠️ 勘误（2026-11-04 晚）**
+>
+> 本文第 2–6 节把「RSNE 里没有 GMCS」判定为缺陷，**该结论不成立**。
+> 802.11 规定 Group Management Cipher Suite 字段缺省时按 **BIP-CMAC-128** 处理；
+> hostapd 对默认值（AES-128-CMAC）刻意省略该字段，客户端解析时也会默认回填。
+> 因此缺失 GMCS 属于**规范行为**，不是缺陷，BP 可以正常验证。
+> 详见文末 [11. 后续：勘误](#11-后续勘误2026-11-04-晚)。
+
 > **结论摘要**
 >
 > - 两台设备（开源 mt76 / 闭源 mt_wifi）的 Beacon 都携带 MMIE，IPN 逐帧递增 →
@@ -243,3 +251,69 @@ walk=01:8 46:5 2D:26 3D:22 DD:30 DD:26 5A:3 BF:12 C0:5 FF:39 FF:7 FF:2 FF:14
 - IEEE 802.11-2020 §12.5.3（Beacon protection）、§9.4.2.241（MMIE）
 - hostapd：`src/ap/wpa_auth_ie.c`（RSNE 生成）、`src/ap/ieee802_11_shared.c`（Ext Cap bit 84）
 - mac80211：`net/mac80211/wpa.c`（BIP/MMIE）
+
+---
+
+## 11. 后续：勘误（2026-11-04 晚）
+
+本文最初的判断已被源码复核推翻，记录如下，原文保留不动。
+
+### 11.1 根因：缺 GMCS 是规范行为
+
+hostapd 只在**非默认值**时才写 Group Management Cipher Suite：
+
+```c
+/* src/ap/wpa_auth_ie.c — wpa_write_rsn_ie() */
+if (conf->ieee80211w != NO_MGMT_FRAME_PROTECTION &&
+    conf->group_mgmt_cipher != WPA_CIPHER_AES_128_CMAC) {
+        /* PMKID Count */
+        ...
+        switch (conf->group_mgmt_cipher) {
+        case WPA_CIPHER_AES_128_CMAC:  RSN_SELECTOR_PUT(pos, ...AES_128_CMAC);  break;
+        case WPA_CIPHER_BIP_GMAC_128:  ...
+        case WPA_CIPHER_BIP_GMAC_256:  ...
+        case WPA_CIPHER_BIP_CMAC_256:  ...
+        }
+        pos += RSN_SELECTOR_LEN;
+}
+```
+
+解析端在字段缺省时会回填默认值：
+
+```c
+/* src/common/wpa_common.c — wpa_parse_wpa_ie_rsn() */
+data->mgmt_group_cipher = WPA_CIPHER_AES_128_CMAC;   /* 缺省 = BIP-CMAC-128 */
+...
+if (/* GMCS 字段存在 */)
+        data->mgmt_group_cipher = rsn_selector_to_bitfield(pos);
+```
+
+即：**字段缺失 == BIP-CMAC-128**，客户端据此验证 MMIE，行为与显式写出该字段等价。
+
+### 11.2 与观测的对应关系
+
+| 观测 | 解释 |
+| --- | --- |
+| 本设备 RSNE 20 字节、无 GMCS | `group_mgmt_cipher` 为默认的 AES-128-CMAC，hostapd 按设计省略 |
+| 同环境对照 AP RSNE 30 字节、显式带 `00-0F-AC-06` | 旧版 hostapd 不做该省略，或配置了非默认值；两种都合法 |
+| 客户端仍能完成关联与通信 | 说明其按缺省 BIP-CMAC-128 处理 |
+
+### 11.3 哪些结论仍然成立
+
+- Beacon 携带 MMIE、IPN 逐帧递增 → **BP 确实在工作**。
+- 客户端 BP 能力差异（Ext Cap bit 84）真实存在，且空口与 AP 侧视图一致。
+- macOS 不声明 bit 84 → 不参与 BP，BP 对 Mac 透明。
+- 关联响应不含 RSNE 的现象仍然成立（但已不构成问题）。
+
+### 11.4 哪些结论不成立
+
+- ~~AP 实现不完整 / 半残~~
+- ~~客户端无法验证 MMIE~~
+- ~~需要修 GMCS 才能让 BP 生效~~
+- ~~根因在 hostapd 2.12~~
+
+### 11.5 遗留
+
+若要进一步确认端到端，可在支持 monitor 且能解 HE 的网卡上抓 4-way，
+确认客户端确实安装了 BIGTK（`00-0F-AC-14` KDE）。SAE 网络的 M3 无法解密，
+此项仍不可验证。
