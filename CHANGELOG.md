@@ -5,6 +5,19 @@ ImmortalWrt 上游合并不逐项展开，仅记录会影响本设备构建或�
 
 单次变更的详细报告放在 [`changelog/`](changelog/README.md)，本文件只保留摘要与索引。
 
+## 2026-11-05
+
+### ca-certificates：黑名单移除 "emSign ECC Root CA - G3"
+
+- 新增 `package/system/ca-certificates/patches/0002-blacklist-certs.patch`，
+  把曾签发 8 位私钥中间 CA 的 `emSign ECC Root CA - G3` 列入黑名单，
+  `PKG_RELEASE` 提升到 2。减少 TLS 校验被投毒/中间人利用的机会。
+- 补丁来自 Debian #1151413 / OpenWrt PR #26066，对当前 `ca-certificates_20260816`
+  源码 `patch -p1 --dry-run` 干净应用。
+- **尚未重新构建**，设备上仍是旧 CA bundle；下次构建后需确认
+  `ca-certificates.crt` 中不再包含该证书。
+- 详细报告：[`changelog/2026-11-05-ca-certificates-blacklist-emsign.md`](changelog/2026-11-05-ca-certificates-blacklist-emsign.md)
+
 ## 2026-11-02
 
 ### XR1710G 恢复 NCT7802 主板温度与风扇控制
