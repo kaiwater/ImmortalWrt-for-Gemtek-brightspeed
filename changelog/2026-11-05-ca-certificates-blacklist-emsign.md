@@ -7,7 +7,7 @@
 | 变更文件 | `package/system/ca-certificates/Makefile`、`package/system/ca-certificates/patches/0002-blacklist-certs.patch` |
 | 类型 | 信任库安全加固（CA 黑名单） |
 | 适用设备 | 全部（XR1710G / XG2010G 共用） |
-| 状态 | 补丁已加入，**尚未重新构建验证** |
+| 状态 | 补丁已加入；已在运行设备上按第 8 节热修复并验证；**镜像待下次构建固化** |
 
 ---
 
@@ -33,16 +33,39 @@
 
 ## 4. 验证方式
 
-**已做（静态）**：
+### 4.1 静态校验（构建前）
+
+**已做**：
 
 - 对 `ca-certificates_20260816` 源码包执行 `patch -p1 --dry-run`，干净应用
 - 源码 `mozilla/certdata.txt` 中确认存在 `CKA_LABEL UTF8 "emSign ECC Root CA - G3"`
 - 源码包 sha256 与 Makefile 的 `PKG_HASH` 一致（`d939bcdd…`）
 
-**未做（需要下一次构建）**：
+### 4.2 热修复后实机验证（2026-11-05）
 
-- 未重新编译，设备上仍是旧 CA bundle
-- 未验证生成后的 `ca-certificates.crt` 中该证书确实消失
+在运行 `immortalwrt 20261102-87a4119c-2248ed75` 的 XR1710G 上，按第 8 节步骤
+直接修改运行中的 bundle：
+
+- bundle 证书数：**121 → 120**，重新扫描确认 emSign 已不存在
+- `apk update` 正常（`10312 distinct packages available`）
+- `uclient-fetch https://downloads.immortalwrt.org/` 正常下载
+- `openssl s_client -CAfile /etc/ssl/certs/ca-certificates.crt` 对正常站点校验通过
+
+**正向/反向用例**（测试域名 `dv-g3b-emudhra.we-have-a-problem.com`，其证书链到
+`CN=EM DV TLS CA - G3B` → emSign 根）：
+
+| 使用的 CA bundle | openssl 结果 | curl 结果 |
+| --- | --- | --- |
+| 当前（已拉黑） | `verify error:num=20:unable to get local issuer certificate` | `http=000`（TLS 失败） |
+| 备份（未拉黑） | `Verify return code: 0 (ok)` | `http=200` |
+
+说明拉黑行为精准生效，且没有误伤其它根证书。
+
+### 4.3 尚未验证
+
+- **未重新构建镜像**：本次是通过热修复在运行设备上验证的，squashfs 里仍是旧 bundle
+- 未在 XG2010G 上验证
+- 上述结论仅覆盖单一设备、单一固件版本与单一测试域名，其它环境可能不同
 
 构建后应检查：
 
@@ -74,7 +97,67 @@ awk '/BEGIN CERTIFICATE/{n++} /emSign ECC Root CA - G3/{print "still present"}' 
 - 风险：极少数仍在使用该根 CA 的站点/服务会连接失败
 - 回滚：删除 `0002-blacklist-certs.patch` 并把 `PKG_RELEASE` 改回 `1`，重新构建
 
-## 8. 参考
+## 8. 热修复（可选，无需重新构建）
+
+适用于已经在运行旧镜像、暂时不想重新构建的设备。原理是把运行系统中
+`/etc/ssl/certs/ca-certificates.crt` 里对应的证书块删掉。
+
+持久性：
+
+- 改动写在 **overlay**，重启后仍然有效
+- 下次 `sysupgrade` 会用新镜像的 rootfs 覆盖 `/etc/ssl/certs/`；新镜像已包含
+  本补丁，因此升级后仍是拉黑状态
+
+### 8.1 操作步骤（设备上 root 执行）
+
+```sh
+B=/etc/ssl/certs/ca-certificates.crt
+cp -a "$B" /root/ca-certificates.crt.bak
+
+rm -f /tmp/p*.pem /tmp/newbundle.crt
+awk 'BEGIN{n=0} /BEGIN CERTIFICATE/{n++; f=sprintf("/tmp/p%03d.pem", n)} {print > f} /END CERTIFICATE/{close(f)}' "$B"
+
+for f in /tmp/p*.pem; do
+    s=$(openssl x509 -in "$f" -noout -subject 2>/dev/null || true)
+    case "$s" in
+        *"emSign ECC Root CA - G3"*) echo "drop: $s" ;;
+        *) cat "$f" >> /tmp/newbundle.crt ;;
+    esac
+done
+
+chmod 644 /tmp/newbundle.crt
+mv /tmp/newbundle.crt "$B"
+rm -f /tmp/p*.pem
+```
+
+### 8.2 验证
+
+```sh
+# 证书数应减少 1（本机 121 → 120）
+grep -c "BEGIN CERTIFICATE" /etc/ssl/certs/ca-certificates.crt
+
+# 基础连网能力
+apk update
+uclient-fetch -O /dev/null https://downloads.immortalwrt.org/
+
+# 反向用例：应因证书链不可信而失败
+curl -sS -o /dev/null https://dv-g3b-emudhra.we-have-a-problem.com/
+
+# 正向对照：用备份 bundle 应成功（http=200）
+curl -sS -o /dev/null --cacert /root/ca-certificates.crt.bak \
+     https://dv-g3b-emudhra.we-have-a-problem.com/
+```
+
+### 8.3 回滚
+
+```sh
+cp /root/ca-certificates.crt.bak /etc/ssl/certs/ca-certificates.crt
+```
+
+> 说明：重建 bundle 时证书顺序可能与原文件不同，这不影响证书校验；
+> 如果你需要与发行版完全一致的顺序，请用重新构建的镜像而不是热修复。
+
+## 9. 参考
 
 - 上游 OpenWrt 提交：<https://github.com/openwrt/openwrt/pull/26066>
 - Debian 修复：<https://salsa.debian.org/debian/ca-certificates/-/commit/4a0203e5ce4ce1a064b97387f52ca6a00c97185c>

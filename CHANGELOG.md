@@ -14,8 +14,9 @@ ImmortalWrt 上游合并不逐项展开，仅记录会影响本设备构建或�
   `PKG_RELEASE` 提升到 2。减少 TLS 校验被投毒/中间人利用的机会。
 - 补丁来自 Debian #1151413 / OpenWrt PR #26066，对当前 `ca-certificates_20260816`
   源码 `patch -p1 --dry-run` 干净应用。
-- **尚未重新构建**，设备上仍是旧 CA bundle；下次构建后需确认
-  `ca-certificates.crt` 中不再包含该证书。
+- 已在运行设备上按报告第 8 节热修复并验证：bundle 121 → 120 张，
+  测试域名 `dv-g3b-emudhra.we-have-a-problem.com` 由 `http=200` 变为证书校验失败；
+  **镜像尚未重新构建**，下次构建会把补丁固化进 squashfs。
 - 详细报告：[`changelog/2026-11-05-ca-certificates-blacklist-emsign.md`](changelog/2026-11-05-ca-certificates-blacklist-emsign.md)
 
 ## 2026-11-02
