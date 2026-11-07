@@ -3,19 +3,10 @@ name: Build XR1710G Firmware
 # 同步上游时若与本文件冲突会保留本文件版本（见 sync-upstream.yml 里写入的 .git/info/attributes）。
 # 定制文件名规则：immortalwrt-<日期>-<仓库提交>-<上游提交>-<目标>-<设备>-<镜像类型>.itb
 
+# [custom] 本分支（master）仅用于对照/学习 lowaka 的实现，**不用于构建与发布**。
+# 固件发布只走 naoki66-base 分支（默认分支）的 workflow。
+# 这里去掉 push 触发并加 job 级守卫，避免同步上游时误触发旧配置的构建和 Release。
 on:
-  push:
-    branches:
-      - master
-    # [custom] 2026-10-04 加 paths 过滤：以前任何 push 到 master 都会触发 XR1710G 构建
-    # 并发布 Release，导致只改 XG2010G（custom/*.2010、files-2010/、build-2010.yml）
-    # 也会顺带跑一次 XR1710G。现在只在下面这些文件变化时触发。
-    paths:
-      - '1710.config'
-      - 'custom/config.fragment'
-      - 'custom/feeds.conf.custom'
-      - 'custom/files/**'
-      - '.github/workflows/build-firmware.yml'
   workflow_dispatch:
     inputs:
       config_seed:
@@ -48,6 +39,8 @@ concurrency:
 
 jobs:
   build:
+    # [custom] 只允许在 naoki66-base 上运行；master 上手动触发也不会构建
+    if: github.ref_name == 'naoki66-base'
     runs-on: ubuntu-latest
     permissions:
       contents: write
