@@ -90,6 +90,20 @@ classify() {
     echo "other"
 }
 
+
+relevant_files() {  # $1=sha $2=kind
+    local sha="$1" kind="$2" files
+    files=$(git show --name-only --pretty=format: "$sha" 2>/dev/null | sed '/^$/d')
+    case "$kind" in
+        kernel)   printf '%s\n' "$files" | grep '^target/linux/' ;;
+        packages) printf '%s\n' "$files" | grep '^package/' ;;
+        custom)   printf '%s\n' "$files" | grep '^custom/' ;;
+        ci)       printf '%s\n' "$files" | grep '^\.github/' ;;
+        docs)     printf '%s\n' "$files" | grep -E '^(docs/|changelog/|.*\.md)' ;;
+        *)        printf '%s\n' "$files" ;;
+    esac | head -3 | tr '\n' ' '
+}
+
 list_commits() {  # $1=range
     git log --format='%H|%h|%ad|%s' --date=short "$1" 2>/dev/null
 }
@@ -114,7 +128,7 @@ while IFS='|' read -r sha short date subj; do
         *)        n_other=$((n_other+1));     label="其它" ;;
     esac
     UP_DETAIL="${UP_DETAIL}[${label}] ${short} ${date} ${subj}
-        $(git show --name-only --pretty=format: "$sha" 2>/dev/null | sed '/^$/d' | head -3 | tr '\n' ' ')
+        $(relevant_files "$sha" "$kind")
 "
 done < <(list_commits "$REL_SHA..$UPSTREAM_REF")
 
@@ -136,7 +150,7 @@ while IFS='|' read -r sha short date subj; do
     case "$kind" in
         kernel|packages|custom)
             BR_DETAIL="${BR_DETAIL}[${label}] ${short} ${date} ${subj}
-        $(git show --name-only --pretty=format: "$sha" 2>/dev/null | sed '/^$/d' | head -3 | tr '\n' ' ')
+        $(relevant_files "$sha" "$kind")
 "
             ;;
     esac
