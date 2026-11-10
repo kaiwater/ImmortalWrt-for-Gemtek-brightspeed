@@ -69,7 +69,24 @@ jobs:
           fi
 
           ahead="$(git rev-list --count HEAD.."$ref")"
-          echo "== $ref：领先 HEAD ${ahead} 个提交，尝试合并"
+          echo "== $ref：领先 HEAD ${ahead} 个提交"
+
+          # [custom] 防御：拒绝合并被重写/替换的上游历史。
+          # 2026-11-10 上游把一条无关历史的 "remote main" 合进 master，
+          # 与我们的分支共同祖先倒退到 2016 年，直接合并会变成几万个提交的
+          # 巨型合并（已实测：HEAD..parent/master = 43683）。
+          mb="$(git merge-base HEAD "$ref" 2>/dev/null || true)"
+          if [ -z "$mb" ]; then
+            echo "::error::上游与本地没有共同祖先，拒绝自动合并（历史被重写？）"
+            exit 1
+          fi
+          span="$(git rev-list --count "$mb..$ref" 2>/dev/null || echo 0)"
+          if [ "$span" -gt 5000 ] 2>/dev/null; then
+            echo "::error::上游历史疑似被重写：共同祖先 $mb 之后的提交数达 $span，拒绝自动合并。请人工评估后手动处理。"
+            exit 1
+          fi
+
+          echo "== 尝试合并（共同祖先之后 $span 个提交）"
 
           if git merge --no-edit "$ref"; then
             echo "changed=true" >> "$GITHUB_OUTPUT"

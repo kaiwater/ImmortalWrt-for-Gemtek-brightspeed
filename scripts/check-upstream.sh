@@ -108,48 +108,71 @@ list_commits() {  # $1=range
     git log --format='%H|%h|%ad|%s' --date=short "$1" 2>/dev/null
 }
 
-# ── 统计 ────────────────────────────────────────────────
-NEW_COUNT=$(git rev-list --count "$REL_SHA..$UPSTREAM_REF" 2>/dev/null || echo 0)
-MISSING=$(git rev-list --count "$LOCAL_BRANCH..$UPSTREAM_REF" 2>/dev/null || echo 0)
-BEHIND_REL=$(git rev-list --count "$REL_SHA..$LOCAL_BRANCH" 2>/dev/null || echo 0)
+# ── 关系与统计 ──────────────────────────────────────────
+MB=$(git merge-base "$REL_SHA" "$UPSTREAM_REF" 2>/dev/null || true)
+REWRITTEN=0
+if ! git merge-base --is-ancestor "$REL_SHA" "$UPSTREAM_REF" 2>/dev/null; then
+    REWRITTEN=1
+fi
 
-# 上游新增按类别
+TREE_FILES=0
+TREE_DIRS=""
+MB_DESC=""
+if [ "$REWRITTEN" = 1 ]; then
+    NEW_COUNT="?"
+    MISSING="?"
+    BEHIND_REL=$(git rev-list --count "$REL_SHA..$LOCAL_BRANCH" 2>/dev/null || echo 0)
+    TREE_FILES=$(git diff --name-only "$REL_SHA" "$UPSTREAM_REF" 2>/dev/null | wc -l | tr -d ' ')
+    TREE_DIRS=$(git diff --name-only "$REL_SHA" "$UPSTREAM_REF" 2>/dev/null \
+        | awk -F/ '{print $1}' | sort | uniq -c | sort -rn | head -6 \
+        | awk '{printf "%s(%s) ", $2, $1}')
+    MB_DESC="$(git rev-parse --short "$MB" 2>/dev/null) $(git log -1 --format='%ad' --date=short "$MB" 2>/dev/null)"
+else
+    NEW_COUNT=$(git rev-list --count "$REL_SHA..$UPSTREAM_REF" 2>/dev/null || echo 0)
+    MISSING=$(git rev-list --count "$LOCAL_BRANCH..$UPSTREAM_REF" 2>/dev/null || echo 0)
+    BEHIND_REL=$(git rev-list --count "$REL_SHA..$LOCAL_BRANCH" 2>/dev/null || echo 0)
+fi
+
+# 上游新增按类别（历史分叉时跳过：逐提交遍历几万条会非常慢）
 n_kernel=0; n_packages=0; n_custom=0; n_ci=0; n_docs=0; n_other=0
 UP_DETAIL=""
-while IFS='|' read -r sha short date subj; do
-    [ -n "${sha:-}" ] || continue
-    kind=$(classify "$sha")
-    case "$kind" in
-        kernel)   n_kernel=$((n_kernel+1));   label="内核/DTS" ;;
-        packages) n_packages=$((n_packages+1)); label="软件包" ;;
-        custom)   n_custom=$((n_custom+1));   label="定制配置" ;;
-        ci)       n_ci=$((n_ci+1));           label="CI" ;;
-        docs)     n_docs=$((n_docs+1));       label="文档" ;;
-        *)        n_other=$((n_other+1));     label="其它" ;;
-    esac
-    UP_DETAIL="${UP_DETAIL}[${label}] ${short} ${date} ${subj}
+if [ "$REWRITTEN" = 0 ]; then
+    while IFS='|' read -r sha short date subj; do
+        [ -n "${sha:-}" ] || continue
+        kind=$(classify "$sha")
+        case "$kind" in
+            kernel)   n_kernel=$((n_kernel+1));     label="内核/DTS" ;;
+            packages) n_packages=$((n_packages+1)); label="软件包" ;;
+            custom)   n_custom=$((n_custom+1));     label="定制配置" ;;
+            ci)       n_ci=$((n_ci+1));             label="CI" ;;
+            docs)     n_docs=$((n_docs+1));         label="文档" ;;
+            *)        n_other=$((n_other+1));       label="其它" ;;
+        esac
+        UP_DETAIL="${UP_DETAIL}[${label}] ${short} ${date} ${subj}
         $(relevant_files "$sha" "$kind")
 "
-done < <(list_commits "$REL_SHA..$UPSTREAM_REF")
+    done < <(list_commits "$REL_SHA..$UPSTREAM_REF")
+fi
 
-# 分支相对 Release 的功能性差异
+# 分支相对 Release 的功能性差异（最多展开 40 条）
 BR_DETAIL=""
 b_kernel=0; b_packages=0; b_custom=0; b_ci=0; b_docs=0; b_other=0
+b_total=0
 while IFS='|' read -r sha short date subj; do
     [ -n "${sha:-}" ] || continue
+    b_total=$((b_total+1))
     kind=$(classify "$sha")
     case "$kind" in
-        kernel)   b_kernel=$((b_kernel+1));   label="内核/DTS" ;;
+        kernel)   b_kernel=$((b_kernel+1));     label="内核/DTS" ;;
         packages) b_packages=$((b_packages+1)); label="软件包" ;;
-        custom)   b_custom=$((b_custom+1));   label="定制配置" ;;
-        ci)       b_ci=$((b_ci+1));           label="CI" ;;
-        docs)     b_docs=$((b_docs+1));       label="文档" ;;
-        *)        b_other=$((b_other+1));     label="其它" ;;
+        custom)   b_custom=$((b_custom+1));     label="定制配置" ;;
+        ci)       b_ci=$((b_ci+1));             label="CI" ;;
+        docs)     b_docs=$((b_docs+1));         label="文档" ;;
+        *)        b_other=$((b_other+1));       label="其它" ;;
     esac
-    # 只有功能性类别才展开细节
     case "$kind" in
         kernel|packages|custom)
-            BR_DETAIL="${BR_DETAIL}[${label}] ${short} ${date} ${subj}
+            [ "$b_total" -le 40 ] && BR_DETAIL="${BR_DETAIL}[${label}] ${short} ${date} ${subj}
         $(relevant_files "$sha" "$kind")
 "
             ;;
@@ -161,15 +184,18 @@ FUNC_NEW=$((n_kernel + n_packages + n_custom))
 FUNC_BRANCH=$((b_kernel + b_packages + b_custom))
 
 if [ "$SHORT" = 1 ]; then
-    printf 'release=%s upstream_new=%s(功能 %s) branch_ahead=%s(功能 %s) missing=%s\n' \
-        "$RELEASE_TAG" "$NEW_COUNT" "$FUNC_NEW" "$BEHIND_REL" "$FUNC_BRANCH" "$MISSING"
+    printf 'release=%s upstream_new=%s(功能 %s) branch_ahead=%s(功能 %s) missing=%s rewritten=%s\n' \
+        "$RELEASE_TAG" "$NEW_COUNT" "$FUNC_NEW" "$BEHIND_REL" "$FUNC_BRANCH" "$MISSING" "$REWRITTEN"
     exit 0
 fi
 
-case "$FUNC_NEW" in
-    0) VERDICT="上游无功能性新增，无需为上游构建" ;;
-    *) VERDICT="上游有 $FUNC_NEW 个功能性改动，建议评估构建" ;;
-esac
+if [ "$REWRITTEN" = 1 ]; then
+    VERDICT="上游历史已被重写/替换，无法按提交对比；需人工评估是否迁移"
+elif [ "$FUNC_NEW" = 0 ]; then
+    VERDICT="上游无功能性新增，无需为上游构建"
+else
+    VERDICT="上游有 $FUNC_NEW 个功能性改动，建议评估构建"
+fi
 
 cat <<EOF
 ============================================================
@@ -179,9 +205,26 @@ cat <<EOF
  本地分支      $LOCAL_BRANCH ($(git rev-parse --short "$LOCAL_SHA"))
  最新 Release  $RELEASE_TAG ($(git rev-parse --short "$REL_SHA"))
  上游          $UPSTREAM_REF ($(git rev-parse --short "$UP_SHA"))
+EOF
+
+if [ "$REWRITTEN" = 1 ]; then
+cat <<EOF
+
+ ⚠ 上游历史与 Release 无共同祖先关系（分叉点 ${MB_DESC}）
+   → 不能按提交数对比；下面按「树内容」比较
+
+ 树差异: $TREE_FILES 个文件
+ 主要目录: $TREE_DIRS
+EOF
+else
+cat <<EOF
 
  Release 之后上游新增: $NEW_COUNT 个
    内核/DTS $n_kernel | 软件包 $n_packages | 定制配置 $n_custom | CI $n_ci | 文档 $n_docs | 其它 $n_other
+EOF
+fi
+
+cat <<EOF
  分支相对 Release:     $BEHIND_REL 个（功能 $FUNC_BRANCH 个）
    内核/DTS $b_kernel | 软件包 $b_packages | 定制配置 $b_custom | CI $b_ci | 文档 $b_docs | 其它 $b_other
  上游还有未合入分支的: $MISSING 个
@@ -190,7 +233,9 @@ cat <<EOF
 【上游新增】
 EOF
 
-if [ "$NEW_COUNT" = 0 ]; then
+if [ "$REWRITTEN" = 1 ]; then
+    echo "  （历史分叉，按提交对比无意义；见上方树差异）"
+elif [ "$NEW_COUNT" = 0 ]; then
     echo "  （无）"
 else
     printf '%s' "$UP_DETAIL"
@@ -214,9 +259,11 @@ cat <<EOF
  结论: $VERDICT
 EOF
 
-if [ "$MISSING" != 0 ]; then
-    echo " 注意: 上游还有 $MISSING 个提交未合入 $LOCAL_BRANCH（可先合并再构建）"
-elif [ "$FUNC_NEW" != 0 ]; then
-    echo " 说明: 上游新增已全部合入本分支，但可能尚未进入最新 Release 镜像"
+if [ "$REWRITTEN" = 0 ]; then
+    if [ "$MISSING" != 0 ]; then
+        echo " 注意: 上游还有 $MISSING 个提交未合入 $LOCAL_BRANCH"
+    elif [ "$FUNC_NEW" != 0 ]; then
+        echo " 说明: 上游新增已全部合入本分支，但可能尚未进入最新 Release 镜像"
+    fi
 fi
 echo "============================================================"
