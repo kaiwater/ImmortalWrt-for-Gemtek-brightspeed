@@ -75,6 +75,7 @@ CONFIG_PACKAGE_bind-dig=y
 CONFIG_PACKAGE_bash=y
 CONFIG_PACKAGE_at=y
 CONFIG_PACKAGE_openssl-util=y
+CONFIG_PACKAGE_openssh-client=y
 
 # ---------- build fix (not a user-facing app) ----------
 # python3 (built as a dependency of i2c-tools' Py3Build path) configures with

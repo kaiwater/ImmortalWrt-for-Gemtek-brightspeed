@@ -17,7 +17,7 @@
 
 - 透明代理：**passwall + sing-box**
 - 应用：lucky、smartdns、ttyd、upnp、wol、filemanager、commands、zerotier、autoreboot、vlmcsd、ddns-go、rtp2httpd、btop、htop
-- 工具：chinadns-ng、coreutils、socat、screen、tcpdump、nano、iperf3、xz-utils、bc、hostapd-utils、umdns、dmesg、bind-dig、bash、at、openssl-util、zram
+- 工具：chinadns-ng、coreutils、socat、screen、tcpdump、nano、iperf3、xz-utils、bc、hostapd-utils、umdns、dmesg、bind-dig、bash、at、openssl-util、openssh-client、zram
 - `libffi`：仅为构建期修复（python3 以 `--with-system-ffi` 编译但 feed 未声明 target libffi 依赖），不是用户功能
 
 ### libffi 来源
