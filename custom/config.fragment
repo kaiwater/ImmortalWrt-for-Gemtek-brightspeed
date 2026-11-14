@@ -83,3 +83,5 @@ CONFIG_PACKAGE_openssh-client=y
 # build dependency, so _ctypes.c fails with "ffi.h: No such file or directory".
 # Selecting libffi stages ffi.h for that build. Costs ~40 KiB in the image.
 CONFIG_PACKAGE_libffi=y
+
+# trigger test (push path filter)
