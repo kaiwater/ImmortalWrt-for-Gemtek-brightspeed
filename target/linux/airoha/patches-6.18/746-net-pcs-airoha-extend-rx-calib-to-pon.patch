@@ -1,0 +1,50 @@
+From: kaiwater <kaiwater@users.noreply.github.com>
+Date: Sun, 15 Nov 2026 19:20:00 +0800
+Subject: [PATCH] net: pcs: airoha: extend RX calibration to the PON PCS
+
+The AN7581 PCS driver only enables manual RX calibration and the CDR
+recovery callback for the Ethernet PCS instance
+("airoha,an7581-pcs-eth").  XR1710G routes its 10G WAN (GDM2) through
+the PON PCS instance ("airoha,an7581-pcs-pon") with a USXGMII copper
+link, so the same sequence is needed there: without it, affected units
+complete copper autonegotiation and then stay at NO-CARRIER with no
+"Link is Up" and no DHCP, while healthy units only work because their
+default SerDes tuning happens to lock.
+
+Enable the existing manual calibration gate and the rxlock workaround
+for the PON PCS as well.  Optical PON line-mode calibration is
+untouched.
+
+Signed-off-by: kaiwater <kaiwater@users.noreply.github.com>
+---
+ drivers/net/pcs/airoha/pcs-airoha-common.c | 9 +++++----
+ 1 file changed, 5 insertions(+), 4 deletions(-)
+
+--- a/drivers/net/pcs/airoha/pcs-airoha-common.c
++++ b/drivers/net/pcs/airoha/pcs-airoha-common.c
+@@ -1316,11 +1316,13 @@
+ 	if (IS_ERR(priv->xfi_rst))
+ 		return dev_err_probe(dev, PTR_ERR(priv->xfi_rst), "failed to get xfi reset lines\n");
+ 
+-	/* For Ethernet PCS, read the AN7581 SoC revision to check if
+-	 * manual rx calibration is needed. Extend the manual-calibration
+-	 * threshold to include E2 silicon.
++	/* For the external SerDes PCS instances, read the AN7581 SoC
++	 * revision to check if manual RX calibration is needed. Extend the
++	 * manual-calibration threshold to include E2 silicon and apply the
++	 * same gate to the PON PCS used by the 10G WAN port.
+ 	 */
+-	if (device_is_compatible(dev, "airoha,an7581-pcs-eth")) {
++	if (device_is_compatible(dev, "airoha,an7581-pcs-eth") ||
++	    device_is_compatible(dev, "airoha,an7581-pcs-pon")) {
+ 		u32 val;
+ 
+ 		ret = regmap_read(priv->scu, AIROHA_SCU_PDIDR, &val);
+@@ -1388,6 +1390,7 @@
+ 	.alloc_regmap_fields = an7581_pcs_alloc_regmap_fields,
+ 	.bringup = an7581_pcs_bringup,
+ 	.link_up = an7581_pcs_phya_link_up,
++	.rxlock_workaround = an7581_pcs_rxlock_workaround,
+ };
+ 
+ static const struct airoha_pcs_match_data an7581_pcs_pcie = {

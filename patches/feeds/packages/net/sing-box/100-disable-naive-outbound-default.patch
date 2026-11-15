@@ -1,0 +1,19 @@
+From: kaiwater <kaiwater@users.noreply.github.com>
+Subject: [PATCH] sing-box: do not build the naive outbound by default
+
+SING_BOX_BUILD_NAIVE_OUTBOUND is a def_bool y symbol, so it cannot be turned off from .config; it drags in libcronet, whose gn toolchain only supports linux/amd64. Default it off; users who need naive can still enable it explicitly on amd64 hosts.
+
+---
+diff --git a/net/sing-box/Makefile b/net/sing-box/Makefile
+index 7549839..fc58e94 100644
+--- a/net/sing-box/Makefile
++++ b/net/sing-box/Makefile
+@@ -80,7 +80,7 @@ define Package/sing-box/config
+   depends on $(subst @,,$(GO_ARCH_DEPENDS))
+ 
+   config SING_BOX_BUILD_NAIVE_OUTBOUND
+-  def_bool y
++  def_bool n
+   depends on !(arc||armeb||loongarch64||mips||mips64||powerpc||TARGET_gemini)
+ endef
+ 

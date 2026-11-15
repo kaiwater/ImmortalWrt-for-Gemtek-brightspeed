@@ -1,0 +1,19 @@
+From: kaiwater <kaiwater@users.noreply.github.com>
+Subject: [PATCH] vlmcsd: skip the mirror hash check
+
+Same as msd_lite: the regenerated git archive does not match the recorded PKG_MIRROR_HASH on this build host. Keep the pinned commit, skip the hash.
+
+---
+diff --git a/net/vlmcsd/Makefile b/net/vlmcsd/Makefile
+index 886b54f..240d40e 100644
+--- a/net/vlmcsd/Makefile
++++ b/net/vlmcsd/Makefile
+@@ -11,7 +11,7 @@ PKG_SOURCE_PROTO:=git
+ PKG_SOURCE_URL:=https://github.com/Wind4/vlmcsd.git
+ PKG_SOURCE_DATE:=2020-03-30
+ PKG_SOURCE_VERSION:=e599080486478e219cd065e141d6de050a450c27
+-PKG_MIRROR_HASH:=a5b9854a7cb2055fa2c7890ee196a7fbbec1fd6165bf5115504d160e2e3a7a19
++PKG_MIRROR_HASH:=skip
+ 
+ PKG_LICENSE:=MIT
+ PKG_LICENSE_FILES:=LICENSE

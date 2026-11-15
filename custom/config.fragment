@@ -1,0 +1,98 @@
+# XR1710G application layer (software only)
+#
+# This fragment is appended to 1710.config before `make defconfig`.
+# Hardware/platform packages (airoha-*, kmod-*, firmware, board, NPU, MLO,
+# WiFi7, fancontrol, default-settings, autocore, cpufreq) are intentionally
+# not listed here: they are defined by the target/device profile and the
+# author's DEVICE_PACKAGES.
+#
+# Proxy: passwall + sing-box (reference: kaiwater/wrt_release proxy.config).
+# Dropped by request: istorex, pbr, adguardhome, OpenClash, argon-config,
+# daed, samba_ksmbd (no USB storage use case).
+
+# ---------- proxy ----------
+CONFIG_PACKAGE_luci-app-passwall=y
+# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Haproxy is not set
+# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_Geoview is not set
+# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_SingBox is not set
+# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_V2ray_Geodata is not set
+# CONFIG_PACKAGE_luci-app-passwall_INCLUDE_V2ray_Plugin is not set
+CONFIG_PACKAGE_sing-box=y
+
+# ---------- applications ----------
+CONFIG_PACKAGE_btop=y
+CONFIG_PACKAGE_htop=y
+
+CONFIG_PACKAGE_luci-app-lucky=y
+CONFIG_PACKAGE_lucky=y
+CONFIG_PACKAGE_luci-i18n-lucky-zh-cn=y
+
+CONFIG_PACKAGE_luci-app-smartdns=y
+CONFIG_PACKAGE_smartdns=y
+# smartdns-ui (Rust dashboard + Next.js web UI). The web UI needs Node >= 20.9
+# and npm at build time; the CI workflow installs Node 22 for this reason.
+CONFIG_PACKAGE_smartdns-ui=y
+
+# OAF / OpenAppFilter. The feed copy in immortalwrt/packages is the old 6.x
+# appfilter; package/oaf/ vendors appfilter 7.0.2 + luci-app-oaf from
+# kenzok8/small-package (the same source wrt_release uses). kmod-oaf is an
+# application-layer netfilter module, not a platform package, so it is listed
+# here even though the header asks to keep kmod-* out of this file.
+CONFIG_PACKAGE_luci-app-oaf=y
+CONFIG_PACKAGE_luci-i18n-oaf-zh-cn=y
+CONFIG_PACKAGE_appfilter=y
+CONFIG_PACKAGE_kmod-oaf=y
+
+CONFIG_PACKAGE_luci-app-ttyd=y
+CONFIG_PACKAGE_ttyd=y
+
+CONFIG_PACKAGE_luci-app-upnp=y
+CONFIG_PACKAGE_luci-app-wol=y
+CONFIG_PACKAGE_luci-app-filemanager=y
+CONFIG_PACKAGE_luci-app-commands=y
+
+CONFIG_PACKAGE_luci-app-zerotier=y
+CONFIG_PACKAGE_zerotier=y
+
+CONFIG_PACKAGE_luci-app-autoreboot=y
+CONFIG_PACKAGE_luci-app-vlmcsd=y
+CONFIG_PACKAGE_vlmcsd=y
+
+CONFIG_PACKAGE_luci-app-ddns-go=y
+CONFIG_PACKAGE_ddns-go=y
+CONFIG_PACKAGE_luci-i18n-ddns-go-zh-cn=y
+
+CONFIG_PACKAGE_luci-app-rtp2httpd=y
+CONFIG_PACKAGE_rtp2httpd=y
+CONFIG_PACKAGE_luci-i18n-rtp2httpd-zh-cn=y
+
+# ---------- requested utilities ----------
+CONFIG_PACKAGE_chinadns-ng=y
+CONFIG_PACKAGE_coreutils=y
+CONFIG_PACKAGE_coreutils-base64=y
+CONFIG_PACKAGE_coreutils-nohup=y
+CONFIG_PACKAGE_coreutils-cksum=y
+CONFIG_PACKAGE_kmod-zram=y
+CONFIG_PACKAGE_zram-swap=y
+CONFIG_PACKAGE_socat=y
+CONFIG_PACKAGE_screen=y
+CONFIG_PACKAGE_tcpdump=y
+CONFIG_PACKAGE_nano=y
+CONFIG_PACKAGE_iperf3=y
+CONFIG_PACKAGE_xz-utils=y
+CONFIG_PACKAGE_bc=y
+CONFIG_PACKAGE_hostapd-utils=y
+CONFIG_PACKAGE_umdns=y
+CONFIG_PACKAGE_dmesg=y
+CONFIG_PACKAGE_bind-dig=y
+CONFIG_PACKAGE_bash=y
+CONFIG_PACKAGE_at=y
+CONFIG_PACKAGE_openssl-util=y
+CONFIG_PACKAGE_openssh-client=y
+
+# ---------- build fix (not a user-facing app) ----------
+# python3 (built as a dependency of i2c-tools' Py3Build path) configures with
+# --with-system-ffi but the packages feed does not declare a target libffi
+# build dependency, so _ctypes.c fails with "ffi.h: No such file or directory".
+# Selecting libffi stages ffi.h for that build. Costs ~40 KiB in the image.
+CONFIG_PACKAGE_libffi=y
