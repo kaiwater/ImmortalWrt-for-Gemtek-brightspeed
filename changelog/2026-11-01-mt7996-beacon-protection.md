@@ -126,7 +126,7 @@ WiFi@NOTICE.SEC,UniCmdBssInfoBcnProt() 1492: Install BIGTK,
     BandIdx (1), BssIndex (5), ucBcnProtEnabled (3),
     ucBcnProtCipherId(12), ucBcnProtKeyId(7)
 
-# hostapd_cli -i rai0 sta 12:25:0d:7e:aa:db
+# hostapd_cli -i rai0 sta aa:bb:cc:dd:ee:ff
 flags=[AUTH][ASSOC][AUTHORIZED][MFP]
 ext_capab=0000000000400040000010      # 第 10 字节 0x10 → bit 84 = 1
 ```

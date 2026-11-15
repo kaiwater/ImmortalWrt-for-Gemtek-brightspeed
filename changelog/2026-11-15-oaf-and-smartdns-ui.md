@@ -79,7 +79,7 @@ SHA256  965e36e3e4271d7fe6f409d748cf4c41eb00ba0375bb752a372acdc6466b9bc3
 ```
 
 刷机：保留配置 `sysupgrade`，`sysupgrade -T` 预检 rc=0，重启约 170 s 回来。
-配置继承完好（hostname / LAN 192.168.12.1/22 / passwall 188 段）。
+配置继承完好（hostname / LAN 192.168.1.1/24 / passwall 188 段）。
 
 实机结果：
 
