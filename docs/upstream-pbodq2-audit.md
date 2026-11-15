@@ -103,3 +103,30 @@ docs/ changelog/ scripts/
 ```
 
 其余一律不搬。
+
+## 5. 在 tag `ubi2-20261108` 上的核对结果（2026-11-15）
+
+对 §2.1 里"建议保留"的 4 项逐项只读核对（不构建）：
+
+| 旧 fork 项 | tag 现状 | 结论 |
+|---|---|---|
+| `9f45f0a2f4` 接受 `gemtek,xr1710g` | 设备块只有 `gemtek_xr1710g-ubi`，`DEVICE_DTS := an7581-xr1710g-ubi`，`DEVICE_COMPAT_VERSION := 2.0`，没有 `SUPPORTED_DEVICES` 别名 | **仍需 overlay**：首次刷写要 `-F`；若想双向免 `-F`，在设备块加 `SUPPORTED_DEVICES += gemtek,xr1710g` |
+| `0800e97850` uboot-envtools 0x4000 env | `package/boot/uboot-tools/uboot-envtools/files/airoha_an7581` 里 `gemtek,xr1710g-ubi` 走 `ubootenv_add_ubi_default`；`0x4000` 只用于 `nokia,xg-040g-md` 的 mtd 布局 | **不需要**，我们那项是给 mtd 变体用的 |
+| `d87432995e` XR1710G 用 airoha fancontrol | 设备块里是 `luci-app-w1700k-fancontrol`，DTS 里 `&i2c0 { hwmon@2e { compatible = "nuvoton,nct7802"; } }`，没有 `airoha-i2c` 覆盖 | **已被 tag 自己的方案取代**，不需要搬 |
+| `81742af0dc` 去掉冲突的 fancontrol 配置 | 同上，tag 没有 airoha fancontrol 包 | **不需要** |
+
+DTS 侧顺带确认：`&i2c0` 是 `status = "okay"` 且直接挂 `nct7802@0x2e`，
+没有 naoki66 线里那个导致板温/风扇失效的 `airoha-i2c` 覆盖。
+
+结论：overlay 可以比 §4 更薄——
+
+```
+custom/config.fragment
+custom/files/**
+1710.config（新 seed）
+target/linux/airoha/image/an7581.mk      ← 只加 SUPPORTED_DEVICES 别名
+patches/local/630-pcs-e2-pon.patch       ← 上游没有
+patches/local/9995-beacon-protection.patch（rebase 版，按需）
+.github/workflows/build-firmware.yml
+docs/ changelog/ scripts/
+```
