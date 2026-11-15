@@ -68,3 +68,33 @@ bin/packages/aarch64_cortex-a53/packages/smartdns-ui-48.4-r1.apk   (6.5 MB)
 - OAF 依赖 `kmod-ipt-conntrack`（iptables 系），与本机 nftables/fw4 并存；
   实机上要确认 `appfilter` 能正常抓流、且不影响硬件 flowtable。
 - OAF 与 flow offload 历史上会互相干扰，属运行时问题，编译期看不出来。
+
+## 5. 整机镜像与实机验证（2026-11-15 17:22 刷入）
+
+```
+大小    83,128,615 字节（79.3 MiB，比上一版 +7 MB）
+SHA256  965e36e3e4271d7fe6f409d748cf4c41eb00ba0375bb752a372acdc6466b9bc3
+包数    412（上一版 406；新增 6 = kmod-oaf/appfilter/luci-app-appfilter/中文翻译/smartdns-ui，
+        其中 smartdns 本来就在）
+```
+
+刷机：保留配置 `sysupgrade`，`sysupgrade -T` 预检 rc=0，重启约 170 s 回来。
+配置继承完好（hostname / LAN 192.168.12.1/22 / passwall 188 段）。
+
+实机结果：
+
+| 项 | 结果 |
+|---|---|
+| `kmod-oaf` | 已加载，`oaf: Driver ver. 5.3.3`；`oaf.ko` 722 KB |
+| `appfilter` | 服务 enabled + running，`/usr/bin/oafd` 已起 |
+| OAF 开关 | `appfilter.global.enable='0'`（默认关闭，未接管流量） |
+| OAF LuCI | `/cgi-bin/luci/admin/services/appfilter` → 403（未登录，路由存在） |
+| oafd 启动日志 | 2 条 `ash: write error` / `uci: Entry not found`，仅启动时一次 |
+| `smartdns-ui` | `/usr/lib/smartdns_ui.so` 5.0 MB + `wwwroot` 6.9 MB |
+| smartdns 服务 | enabled / stopped（与刷机前一致，未启用） |
+| 回归项 | WAN 10000 Mb/s carrier=1、ping 6.7 ms、三频 SSID 正常、nct7802 37.9℃/2332 rpm、CA 120 条、passwall 3 进程、dmesg 0 panic/oops |
+
+结论：OAF 与 smartdns-ui 都已进镜像并可运行；OAF 默认不启用，
+需要在 LuCI 打开（或 `uci set appfilter.global.enable=1`
++ `/etc/init.d/appfilter restart`）才会接管流量。启用后的
+flowtable/HNAT 影响仍需单独测。
