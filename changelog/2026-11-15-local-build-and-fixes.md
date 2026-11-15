@@ -70,7 +70,7 @@ feed 自带的 `files/dawn.config` 也有 `config metric '802_11a_6g'`。
 **处理：删除补丁**（`git rm patches/feeds/packages/net/dawn/100-dawn-6ghz-band.patch`）。
 不是 rebase——上游的实现比我们的更完整（含 7125 MHz 上界和注释）。
 
-### 2. smartdns-ui 无法构建（上游打包问题）
+### 2. smartdns-ui 在 arm64 宿主上构建失败（已修正结论，2026-11-15 晚）
 
 smartdns `48.4` 新增了 Rust 面板 `smartdns-ui`，其 `Build/Compile` 里执行：
 
@@ -78,23 +78,33 @@ smartdns `48.4` 新增了 Rust 面板 `smartdns-ui`，其 `Build/Compile` 里执
 pushd smartdns-webui ; npm install ; npm run build ; popd
 ```
 
-但 OpenWrt 的 `feeds/packages/lang/node/node/Makefile` 在 `Host/Install` 里显式删除 npm：
+当时看到 buildroot 里没有 `npm`，判断为上游打包缺陷。**这个结论是错的**，实际原因有两个：
 
-```make
-rm -f $(1)/bin/npm
-rm -f $(1)/bin/npx
-rm -rf $(1)/lib/node_modules/npm
-```
+1. `feeds/packages/lang/node/node/Makefile` 把宿主二进制写死成 x64：
 
-也就是说 **buildroot 里根本没有 npm**，`npm install` 失败（子 shell 未 `set -e`，
-错误被吞掉），随后 `cp smartdns-webui/out` 找不到目录而报错。
-这与宿主机架构无关，x86 CI 上同样会失败。
+   ```make
+   NODEJS_BIN:=node-v$(PKG_VERSION)-linux-x64.tar.gz
+   ```
 
-**处理：`1710.config` 里 `CONFIG_PACKAGE_smartdns-ui` 改为 not set。**
-smartdns 本体保留；`luci-app-smartdns` 的 `INCLUDE_WebUI` 本来就没开。
+   x86_64 构建机上没问题；**arm64 构建机上装进去的是 x86-64 的 node**，
+   执行时只会得到 `rosetta error: failed to open elf at /lib64/ld-linux-x86-64.so.2`
+   和 `Trace/breakpoint trap`（子 shell 没有 `set -e`，报错被吞掉，
+   最后只在 `cp smartdns-webui/out` 处暴露）。
 
-> 如果以后需要这个面板，正确做法是给 `node/host` 加 npm，或给 smartdns-ui 打补丁
-> 把 webui 步骤做成可选，而不是在 config 里打开它。
+2. 该 makefile 的 `Host/Install` 虽然删了 `bin/npm`，但 `staging_dir/hostpkg/`
+   里仍留有 `lib/node_modules/npm`（tar 解包进来的），所以 x86 构建机上
+   npm 是可用的——**CI 一直是能编 smartdns-ui 的**，1104 的 manifest 里就有它。
+
+修正后的处理：
+
+- `1710.config` 恢复 `CONFIG_PACKAGE_smartdns-ui=y`；
+- `.github/workflows/build-firmware.yml` 增加 `actions/setup-node@v4`（Node 22），
+  把 webui 需要的 Node/npm 显式装好，不再依赖 system 里碰巧存在的 npm；
+- 本地 arm64 验证时，把 `staging_dir/hostpkg/bin/node` 换成官方 arm64 的
+  Node 22.11（仅本地，不入库），`npm install` + `next build` 通过
+  （`✓ Compiled successfully`），产出 `smartdns-ui-48.4-r1.apk`（6.5 MB）。
+
+> Next.js 16 / React 19 要求 Node >= 20.9，Node 22 是验证过的版本。
 
 ## 本地构建与 CI 的差异（仅本地，不入库）
 

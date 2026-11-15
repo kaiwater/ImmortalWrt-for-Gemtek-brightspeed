@@ -239,6 +239,17 @@ jobs:
       - name: Download sources
         run: make download -j$(nproc)
 
+      # smartdns-ui 的 web UI 是 Next.js 16 / React 19，构建时需要 Node >= 20.9
+      # 和可用的 npm。feed 里的 node/host 把宿主二进制写死成 linux-x64，
+      # 也不保证 npm 在 PATH 上；这里显式装一份 Node 22，避免依赖构建机巧合。
+      - name: Setup Node.js for smartdns-ui
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Show Node.js version
+        run: node --version && npm --version
+
       - name: Build Firmware
         shell: bash
         run: |
