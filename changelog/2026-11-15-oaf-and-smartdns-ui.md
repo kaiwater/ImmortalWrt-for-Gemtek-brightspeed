@@ -98,3 +98,14 @@ SHA256  965e36e3e4271d7fe6f409d748cf4c41eb00ba0375bb752a372acdc6466b9bc3
 需要在 LuCI 打开（或 `uci set appfilter.global.enable=1`
 + `/etc/init.d/appfilter restart`）才会接管流量。启用后的
 flowtable/HNAT 影响仍需单独测。
+
+## 6. 发布
+
+```
+tag     20261115-46f98e0（基于 46f98e0a48）
+title   ImmortalWrt for XR1710G 20261115-46f98e0
+资产    itb 83,128,615 B / manifest / version / config / feeds / profiles / sha256sums
+镜像    e5179cabc35c051c229a52122b47280d6370b07069c59eb4cccf57f9dd2d3cef
+```
+
+刷机后的运行版本与发布资产一致（`2026-11-15-46f98e0`，412 包）。
