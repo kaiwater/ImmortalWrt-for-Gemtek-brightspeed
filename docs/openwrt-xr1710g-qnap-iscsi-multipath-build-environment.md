@@ -207,3 +207,39 @@ Caveats before investing time:
    combined throughput stays capped by that port regardless of the guest NICs.
 4. Even when throughput does not improve, two bridged paths are useful as
    failover: one link down keeps the LUN reachable.
+
+## 11. Compiler cache (ccache)
+
+The trees use OpenWrt's native ccache (`CONFIG_CCACHE=y`). On the LUN the cache
+is shared by every project:
+
+```
+config      CONFIG_CCACHE=y
+            CONFIG_CCACHE_DIR="/mnt/qnap/ccache"
+directory   /mnt/qnap/ccache
+```
+
+`/mnt/qnap/ccache/ccache.conf`:
+
+```
+base_dir = /build
+hash_dir = false
+compiler_check = content
+sloppiness = file_stat_matches
+max_size = 20G
+```
+
+Notes:
+
+- `base_dir = /build` (not `/mnt/qnap`) because builds run through the
+  `op-env.sh` bind mount, so the compiler sees `/build/pbodq2` and
+  `/build/openwrt`. Path normalization only works when `base_dir` matches the
+  path the compiler was invoked with.
+- `hash_dir = false` plus `sloppiness = file_stat_matches` make the cache
+  usable across trees and across rebuilds with unchanged content.
+- The repository seeds only set `CONFIG_CCACHE=y` with an empty
+  `CONFIG_CCACHE_DIR`, which falls back to `$(TOPDIR)/.ccache`; the shared
+  `/mnt/qnap/ccache` path is a local deployment choice, set in the tree
+  `.config` and the LUN copy of the seed.
+- First build populates the cache (low hit rate expected); later builds and
+  other trees sharing the same `base_dir` benefit.
