@@ -190,6 +190,20 @@ jobs:
           echo "移除数量: $removed"
           echo "== daede feed 安装情况 =="
           ls -l package/feeds/daede/ 2>/dev/null || echo "（没有找到 package/feeds/daede）"
+      - name: Drop duplicate open-app-filter from feeds
+        run: |
+          # package/oaf/ 自带 appfilter 7.0.2 + kmod-oaf（来自 kenzok8/small-package），
+          # 而 immortalwrt/packages 里还有一份旧的 open-app-filter（appfilter 6.x）。
+          # 两者定义同名包（appfilter / kmod-oaf），必须去掉 feed 的副本。
+          shopt -s nullglob
+          removed=0
+          for d in package/feeds/*/open-app-filter; do
+            echo "移除重复包: $d"
+            rm -rf "$d"
+            removed=$((removed + 1))
+          done
+          echo "移除数量: $removed"
+
       - name: Apply feed patches
         run: |
           # [custom] 上游脚本在旧树里可能还不存在，存在才执行
