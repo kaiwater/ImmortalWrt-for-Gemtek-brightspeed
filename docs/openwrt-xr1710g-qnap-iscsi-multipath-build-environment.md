@@ -175,3 +175,35 @@ Container filesystem export taken before moving the workspace:
 ```
 
 Restore with `zstd -dc ... | docker import - iwrt-build:20261116`.
+
+## 10. Future work: dual-NIC bridged multipath (not attempted)
+
+The Mac already has two wired ports on the same L2 segment (`en8` at 2.5GbE
+and `en21` at 5GbE) and the QNAP target is bound to two 5G ports (`eth0` and
+`eth4`). The idea is to give the guest two bridged NICs, one per host port, so
+each iSCSI portal leaves through a different physical link:
+
+```
+client en8  -- bridge1 -- guest nic1 -- portal 192.168.2.142 (QNAP eth4)
+client en21 -- bridge2 -- guest nic2 -- portal 192.168.2.141 (QNAP eth0)
+```
+
+Verification on the guest:
+
+```sh
+ip route get 192.168.2.142   # expect src/dev of nic1
+ip route get 192.168.2.141   # expect src/dev of nic2
+iscsiadm -m session -P 3 | grep -E "Portal|Iface"
+```
+
+Caveats before investing time:
+
+1. **Lima's vz backend only offers user-mode NAT.** Bridged interfaces need
+   the QEMU backend plus `socket_vmnet`, or UTM with two bridged adapters.
+2. **The storage is the current bottleneck.** This LUN writes at 179 MB/s;
+   two links could carry ~590 MB/s, so aggregation only pays off after the LUN
+   moves to SSD-backed storage.
+3. If both sessions still transit one 1GbE/2.5GbE uplink (switch side), the
+   combined throughput stays capped by that port regardless of the guest NICs.
+4. Even when throughput does not improve, two bridged paths are useful as
+   failover: one link down keeps the LUN reachable.
