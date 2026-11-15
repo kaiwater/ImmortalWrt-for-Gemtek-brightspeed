@@ -6,17 +6,45 @@
 
 ```
 immortalwrt-naoki66-xr1710g-snapshot-airoha-an7581-gemtek_xr1710g-squashfs-sysupgrade.itb
-大小   76,128,551 字节（73 MiB）
-SHA256 19d9963e77bad62e0a5136ed8459dadb5a4dc64f1d95b6cf6c4cf40199bb91a8
-版本   2026-11-15-3447fbe（基于提交 3447fbe07b）
-内核   6.18.55~002c188fb7
+大小    76,128,551 字节（73 MiB）
+SHA256  9352c45bd3272abb2c76345b37996b045cfd0a8c5b1c22663bcb9fc0b699b6a1
+内核    6.18.55~002c188fb7
+包数    406
 ```
+
+与上一个 release（`20261104-acbd046c`，408 包）相比，**只少了 `libcronet` 和
+`smartdns-ui` 两个包**，没有别的增删；其余变化都是包版本更新（luci 26.302 → 26.315、
+dawn 2026.06.10 → 2026.11.11、xray-core、luci-app-passwall 等）。
 
 内容与本轮计划的发布一致：CA 黑名单（bundle 120 条，无 `emSign ECC Root CA - G3`）、
 PCS 630（`pcs-airoha-common.c` 的校准门同时匹配 `airoha,an7581-pcs-eth` 与
 `airoha,an7581-pcs-pon`）、i2c/nct7802 风扇修复、openssh-client。
 
-## 构建中修掉的两个真实故障
+## 构建中修掉的三个真实故障
+
+### 0. 本地构建顺序错误导致两个 LuCI 应用被静默丢弃（仅本地，不是仓库问题）
+
+第一版本地产物只有 402 个包，比上一个 release 少了 `luci-app-lucky` 和
+`luci-app-mlo`。原因不在包本身，而在本地的构建顺序：
+
+```sh
+# 我最初的 build2.sh
+make defconfig      # ← 此时 feeds 还没 update/install
+./scripts/feeds update -a
+./scripts/feeds install -a
+```
+
+`package/lucky/luci-app-lucky` 和 `package/emortal/luci-app-mlo` 的 Makefile 都
+`include $(TOPDIR)/feeds/luci/luci.mk`。第一次 `defconfig` 时 `feeds/luci` 还不存在，
+元数据扫描只写出一个空的 `tmp/info/.packageinfo-*`（只剩 `Source-Makefile:` 一行），
+Kconfig 里因此没有这两个符号，`CONFIG_PACKAGE_luci-app-lucky=y` 被当成未知符号丢掉。
+之后即使 feeds 装好了，`tmp/info` 是缓存，`make defconfig` 也不会重扫。
+
+修法：删掉 `tmp/info` 和 `tmp/.config-package.in` 强制重扫。重扫后两个包回到
+`.config`，产物 406 包。
+
+> **CI 不受影响**：`build-firmware.yml` 先装 feeds 再生成配置，顺序是对的。
+> 这条记在这里，是为了以后本地复现时不要重蹈覆辙：**feeds 必须在 defconfig 之前**。
 
 ### 1. dawn 的 6 GHz feed 补丁已过时
 
