@@ -3,7 +3,9 @@
 # check-upstream.sh — 对比「最新 Release」与上游 naoki66，判断有没有值得为它构建的东西
 #
 # 用法:
-#   scripts/check-upstream.sh              # 默认：对比最新 Release 与 naoki66/master
+#   scripts/check-upstream.sh              # 默认：两条线都检查（naoki66 + pbodq2）
+#   scripts/check-upstream.sh --line pbodq2   # 只看 pbodq2 线
+#   scripts/check-upstream.sh --line naoki66  # 只看 naoki66 线
 #   scripts/check-upstream.sh --no-fetch   # 不联网（用本地已有引用）
 #   scripts/check-upstream.sh --short      # 只输出一行结论（适合 cron/通知）
 #   scripts/check-upstream.sh --tag 20261104-acbd046c   # 指定对比基线
@@ -28,12 +30,14 @@ REPO="${REPO:-$REPO_DEFAULT}"
 
 DO_FETCH=1
 SHORT=0
+LINE="both"
 RELEASE_TAG=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --no-fetch) DO_FETCH=0 ;;
         --short)    SHORT=1 ;;
+        --line)     shift; LINE="${1:-both}" ;;
         --tag)      shift; RELEASE_TAG="${1:-}" ;;
         -h|--help)  sed -n '3,20p' "$0"; exit 0 ;;
         *) echo "unknown option: $1" >&2; exit 2 ;;
@@ -42,6 +46,16 @@ while [ $# -gt 0 ]; do
 done
 
 git rev-parse --git-dir >/dev/null 2>&1 || { echo "not a git repo: $ROOT" >&2; exit 1; }
+
+PB_ARGS=()
+[ "$SHORT" = 1 ] && PB_ARGS+=(--short)
+if [ "$LINE" = "pbodq2" ]; then
+    exec bash "$ROOT/scripts/check-upstream-pbodq2.sh" "${PB_ARGS[@]}"
+fi
+if [ "$LINE" != "both" ] && [ "$LINE" != "naoki66" ]; then
+    echo "unknown --line value: $LINE (both|naoki66|pbodq2)" >&2
+    exit 2
+fi
 
 # ── 准备引用 ─────────────────────────────────────────────
 if [ "$DO_FETCH" = 1 ]; then
@@ -267,3 +281,9 @@ if [ "$REWRITTEN" = 0 ]; then
     fi
 fi
 echo "============================================================"
+
+# ── 第二条线：pbodq2 ────────────────────────────────────
+if [ "$LINE" = "both" ]; then
+    echo
+    bash "$ROOT/scripts/check-upstream-pbodq2.sh" "${PB_ARGS[@]}"
+fi
