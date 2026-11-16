@@ -200,6 +200,9 @@ FUNC_BRANCH=$((b_kernel + b_packages + b_custom))
 if [ "$SHORT" = 1 ]; then
     printf 'release=%s upstream_new=%s(功能 %s) branch_ahead=%s(功能 %s) missing=%s rewritten=%s\n' \
         "$RELEASE_TAG" "$NEW_COUNT" "$FUNC_NEW" "$BEHIND_REL" "$FUNC_BRANCH" "$MISSING" "$REWRITTEN"
+    if [ "$LINE" = "both" ]; then
+        bash "$ROOT/scripts/check-upstream-pbodq2.sh" "${PB_ARGS[@]}"
+    fi
     exit 0
 fi
 
