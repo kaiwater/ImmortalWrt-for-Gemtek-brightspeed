@@ -19,6 +19,8 @@ cd "$ROOT" || exit 1
 
 PB_REPO="${PB_REPO:-pbodq2/OpenWRT-W1700K-XR1710G}"
 PB_BRANCH="${PB_BRANCH:-pbodq2-base}"
+FAN_REPO="${FAN_REPO:-OpenWRT-fanboy/OpenW1700k}"
+FAN_BRANCH="${FAN_BRANCH:-ubi2}"
 SHORT=0
 
 while [ $# -gt 0 ]; do
@@ -63,19 +65,19 @@ if [ -z "$LATEST_TAG" ]; then
 fi
 
 # ── 上游版本信息（内核 / mt76）──────────────────────────
-ver_of() {  # $1=ref  -> "kernel=... mt76=..."
-    local ref="$1" k v
-    k=$(gh api "repos/$PB_REPO/contents/target/linux/generic/kernel-6.18?ref=$ref" \
+ver_of() {  # $1=repo $2=ref -> "kernel=... mt76=..."
+    local repo="$1" ref="$2" k v
+    k=$(gh api "repos/$repo/contents/target/linux/generic/kernel-6.18?ref=$ref" \
             --jq '.content' 2>/dev/null | base64 -d 2>/dev/null \
             | sed -n 's/^LINUX_VERSION-6\.18 = //p' | head -1)
-    v=$(gh api "repos/$PB_REPO/contents/package/kernel/mt76/Makefile?ref=$ref" \
+    v=$(gh api "repos/$repo/contents/package/kernel/mt76/Makefile?ref=$ref" \
             --jq '.content' 2>/dev/null | base64 -d 2>/dev/null \
             | sed -n 's/^PKG_SOURCE_DATE:=//p' | head -1)
     printf 'kernel=6.18%s mt76=%s' "${k:-?}" "${v:-?}"
 }
 
-BASE_VER=$(ver_of "$BASE_TAG")
-LATEST_VER=$(ver_of "$LATEST_TAG")
+BASE_VER=$(ver_of "$PB_REPO" "$BASE_TAG")
+LATEST_VER=$(ver_of "$PB_REPO" "$LATEST_TAG")
 
 # ── 上游默认分支（可能领先 tag，未发版）────────────────
 DEF_BRANCH=""; DEF_SHA=""; DEF_DATE=""; DEF_AHEAD="?"; DEF_BEHIND="?"; DEF_COMMITS=""
@@ -95,7 +97,25 @@ if command -v gh >/dev/null 2>&1; then
 fi
 DEF_VER=""
 if [ -n "$DEF_BRANCH" ] && [ "${DEF_AHEAD:-0}" != "0" ]; then
-    DEF_VER=$(ver_of "$DEF_BRANCH")
+    DEF_VER=$(ver_of "$PB_REPO" "$DEF_BRANCH")
+fi
+
+# ── 更上游：fanboy 的 ubi2 分支 ────────────────────────
+FAN_SHA=""; FAN_DATE=""; FAN_AHEAD="?"; FAN_BEHIND="?"; FAN_COMMITS=""; FAN_VER=""
+if command -v gh >/dev/null 2>&1; then
+    FAN_OWNER=${FAN_REPO%%/*}
+    FAN_META=$(gh api "repos/$FAN_REPO/commits/$FAN_BRANCH" 2>/dev/null || true)
+    FAN_SHA=$(printf '%s' "$FAN_META" | jq -r '.sha[0:8] // ""' 2>/dev/null)
+    FAN_DATE=$(printf '%s' "$FAN_META" | jq -r '.commit.committer.date[0:10] // ""' 2>/dev/null)
+    if [ -n "$FAN_SHA" ]; then
+        FAN_VER=$(ver_of "$FAN_REPO" "$FAN_BRANCH")
+        CMP3=$(gh api "repos/$PB_REPO/compare/$BASE_SHA...$FAN_OWNER:$FAN_BRANCH" 2>/dev/null || true)
+        if [ -n "$CMP3" ]; then
+            FAN_AHEAD=$(printf '%s' "$CMP3" | jq -r '.ahead_by // "?"' 2>/dev/null)
+            FAN_BEHIND=$(printf '%s' "$CMP3" | jq -r '.behind_by // "?"' 2>/dev/null)
+            FAN_COMMITS=$(printf '%s' "$CMP3" | jq -r '.commits[]? | "  " + .sha[0:8] + " " + (.commit.message | split("\n")[0])' 2>/dev/null | tail -10)
+        fi
+    fi
 fi
 
 # ── 上游 tag 之间的差异 ─────────────────────────────────
@@ -119,8 +139,8 @@ fi
 OVERLAY_N=$(printf '%s\n' "$OVERLAY" | sed '/^$/d' | wc -l | tr -d ' ')
 
 if [ "$SHORT" = 1 ]; then
-    printf 'pbodq2 branch=%s base=%s latest=%s tag_ahead=%s def_branch=%s def_ahead=%s overlay=%s\n' \
-        "$BR_SHORT" "$BASE_TAG" "$LATEST_TAG" "$AHEAD" "${DEF_BRANCH:-?}" "${DEF_AHEAD:-?}" "$OVERLAY_N"
+    printf 'pbodq2 branch=%s base=%s latest=%s tag_ahead=%s def_branch=%s def_ahead=%s fanboy=%s fan_ahead=%s overlay=%s\n' \
+        "$BR_SHORT" "$BASE_TAG" "$LATEST_TAG" "$AHEAD" "${DEF_BRANCH:-?}" "${DEF_AHEAD:-?}" "${FAN_SHA:-?}" "${FAN_AHEAD:-?}" "$OVERLAY_N"
     exit 0
 fi
 
@@ -135,6 +155,8 @@ cat <<EOF
  基线版本      $BASE_VER
  最新版本      $LATEST_VER
  默认分支      ${DEF_BRANCH:-?} (${DEF_SHA:-?} ${DEF_DATE:-})
+ fanboy 上游   $FAN_REPO $FAN_BRANCH (${FAN_SHA:-?} ${FAN_DATE:-})
+               ${FAN_VER:-?} ; 相对基线 ahead=${FAN_AHEAD} behind=${FAN_BEHIND}
 EOF
 
 if [ "$BASE_TAG" = "$LATEST_TAG" ]; then
@@ -142,8 +164,14 @@ cat <<EOF
 
  基线即上游最新 tag，无需评估新版本。
  默认分支领先最新 tag: ${DEF_AHEAD} 个提交${DEF_VER:+（$DEF_VER）}
+ fanboy ${FAN_BRANCH} 领先基线: ${FAN_AHEAD:-?} 个提交${FAN_VER:+（$FAN_VER）}
  我们的 overlay: $OVERLAY_N 个提交
 EOF
+    if [ -n "${FAN_COMMITS:-}" ] && [ "${FAN_AHEAD:-0}" != "0" ]; then
+        echo " fanboy 最近提交:"
+        printf '%s\n' "$FAN_COMMITS"
+        echo
+    fi
     [ -n "$OVERLAY" ] && printf '%s\n' "$OVERLAY"
 else
 cat <<EOF
@@ -166,6 +194,9 @@ cat <<EOF
 
 【上游默认分支未发版的提交】
 ${DEF_COMMITS:-  （无）}
+
+【fanboy $FAN_BRANCH 领先基线的提交（最近 10 条）】
+${FAN_COMMITS:-  （无 / 无法获取）}
 
 【我们的 overlay（$BASE_TAG 之后）】
 EOF
