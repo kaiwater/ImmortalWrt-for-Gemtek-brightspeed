@@ -77,6 +77,27 @@ ver_of() {  # $1=ref  -> "kernel=... mt76=..."
 BASE_VER=$(ver_of "$BASE_TAG")
 LATEST_VER=$(ver_of "$LATEST_TAG")
 
+# ── 上游默认分支（可能领先 tag，未发版）────────────────
+DEF_BRANCH=""; DEF_SHA=""; DEF_DATE=""; DEF_AHEAD="?"; DEF_BEHIND="?"; DEF_COMMITS=""
+if command -v gh >/dev/null 2>&1; then
+    DEF_BRANCH=$(gh api "repos/$PB_REPO" --jq '.default_branch' 2>/dev/null || true)
+    if [ -n "$DEF_BRANCH" ]; then
+        DEF_META=$(gh api "repos/$PB_REPO/commits/$DEF_BRANCH" 2>/dev/null || true)
+        DEF_SHA=$(printf '%s' "$DEF_META" | jq -r '.sha[0:8] // ""' 2>/dev/null)
+        DEF_DATE=$(printf '%s' "$DEF_META" | jq -r '.commit.committer.date[0:10] // ""' 2>/dev/null)
+        CMP2=$(gh api "repos/$PB_REPO/compare/$LATEST_TAG...$DEF_BRANCH" 2>/dev/null || true)
+        if [ -n "$CMP2" ]; then
+            DEF_AHEAD=$(printf '%s' "$CMP2" | jq -r '.ahead_by // "?"' 2>/dev/null)
+            DEF_BEHIND=$(printf '%s' "$CMP2" | jq -r '.behind_by // "?"' 2>/dev/null)
+            DEF_COMMITS=$(printf '%s' "$CMP2" | jq -r '.commits[]? | "  " + .sha[0:8] + " " + (.commit.message | split("\n")[0])' 2>/dev/null | head -20)
+        fi
+    fi
+fi
+DEF_VER=""
+if [ -n "$DEF_BRANCH" ] && [ "${DEF_AHEAD:-0}" != "0" ]; then
+    DEF_VER=$(ver_of "$DEF_BRANCH")
+fi
+
 # ── 上游 tag 之间的差异 ─────────────────────────────────
 AHEAD="?"; BEHIND="?"; STATUS="?"
 COMMITS=""
@@ -98,8 +119,8 @@ fi
 OVERLAY_N=$(printf '%s\n' "$OVERLAY" | sed '/^$/d' | wc -l | tr -d ' ')
 
 if [ "$SHORT" = 1 ]; then
-    printf 'pbodq2 branch=%s base=%s latest=%s ahead=%s overlay=%s\n' \
-        "$BR_SHORT" "$BASE_TAG" "$LATEST_TAG" "$AHEAD" "$OVERLAY_N"
+    printf 'pbodq2 branch=%s base=%s latest=%s tag_ahead=%s def_branch=%s def_ahead=%s overlay=%s\n' \
+        "$BR_SHORT" "$BASE_TAG" "$LATEST_TAG" "$AHEAD" "${DEF_BRANCH:-?}" "${DEF_AHEAD:-?}" "$OVERLAY_N"
     exit 0
 fi
 
@@ -113,12 +134,14 @@ cat <<EOF
  上游最新 tag  $LATEST_TAG (${LATEST_SHA:-?})
  基线版本      $BASE_VER
  最新版本      $LATEST_VER
+ 默认分支      ${DEF_BRANCH:-?} (${DEF_SHA:-?} ${DEF_DATE:-})
 EOF
 
 if [ "$BASE_TAG" = "$LATEST_TAG" ]; then
 cat <<EOF
 
  基线即上游最新 tag，无需评估新版本。
+ 默认分支领先最新 tag: ${DEF_AHEAD} 个提交${DEF_VER:+（$DEF_VER）}
  我们的 overlay: $OVERLAY_N 个提交
 EOF
     [ -n "$OVERLAY" ] && printf '%s\n' "$OVERLAY"
@@ -140,6 +163,9 @@ EOF
         echo "  （无法获取提交列表）"
     fi
 cat <<EOF
+
+【上游默认分支未发版的提交】
+${DEF_COMMITS:-  （无）}
 
 【我们的 overlay（$BASE_TAG 之后）】
 EOF
