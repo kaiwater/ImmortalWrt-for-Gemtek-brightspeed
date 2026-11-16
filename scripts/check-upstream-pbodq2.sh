@@ -71,7 +71,7 @@ ver_of() {  # $1=ref  -> "kernel=... mt76=..."
     v=$(gh api "repos/$PB_REPO/contents/package/kernel/mt76/Makefile?ref=$ref" \
             --jq '.content' 2>/dev/null | base64 -d 2>/dev/null \
             | sed -n 's/^PKG_SOURCE_DATE:=//p' | head -1)
-    printf 'kernel=%s mt76=%s' "${k:-?}" "${v:-?}"
+    printf 'kernel=6.18%s mt76=%s' "${k:-?}" "${v:-?}"
 }
 
 BASE_VER=$(ver_of "$BASE_TAG")
