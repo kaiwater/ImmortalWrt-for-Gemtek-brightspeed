@@ -92,6 +92,20 @@ CONFIG_GOLANG_EXTERNAL_BOOTSTRAP_ROOT="/opt/go-bootstrap"   # 官方 go1.24.13 l
   CA 120、passwall、dmesg 无异常、风扇/板温正常
 - 待补：冷启动 ×5、Wi-Fi 吞吐/MLO 客户端、OAF 运行态抓流
 
+### 2026-11-25 补充
+
+- MLO 客户端（iPhone → iperf3 → NAS 192.168.2.141）实测 **1.7 Gbps**；station 协商
+  `2401.9 / 2401.9 Mbps 160MHz EHT-MCS11 NSS2`，同时 `ppe/entries=167`、`ppe/bind=4`、
+  `conntrack` 中 OFFLOAD 13 条——无线和 PPE offload 均正常。
+- 当天先出现"测速只有 ~100 Mbps、FlowSense BND/UNB 全 0、SSID 看似消失"，定位到
+  两件事：
+  1. `ap-mld0` 漏出运行中的 flowtable（见 §4 第 5 条），`fw4 reload` 后恢复；
+  2. 之前发生过一次 `phy0 L1 SER recovery`，之后电台处于降级状态（TX 24 Mbps、
+     ACK 丢失、客户端认证不上），整机重启后彻底恢复。和 2026-11-09 linux-mediatek
+     的报告一致：full chip reset + NPU 会彻底起不来（AER CmpltTO、firmware 超时）；
+     L1 路径虽然会 stop/reinit NPU，但不能保证无线→PPE 通路完全复原。
+     遇到 dmesg 里出现 `L1 SER recovery completed` 且速率异常，直接重启最稳。
+
 ## 6. 已知差异
 
 - 本地 arm64 构建，Go 引导用预编译、无 `libcronet`（sing-box 无 naive 出站）

@@ -35,5 +35,12 @@ boot() {
 			logger -t fw4-flowtable "wifi netdev missing from flowtable:$missing, reloading firewall"
 			fw4 reload
 		fi
+
+		# The driver patch defaults the PPE bind rate to 8, but the register
+		# reads back 0 after boot.  Restore the compiled-in default so flows
+		# bind after the documented number of packets.
+		if [ -w /sys/kernel/debug/ppe/bind_rate ]; then
+			echo 8 > /sys/kernel/debug/ppe/bind_rate
+		fi
 	) &
 }
