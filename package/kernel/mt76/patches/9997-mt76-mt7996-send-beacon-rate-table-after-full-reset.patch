@@ -1,0 +1,35 @@
+From a0007bb6e63db1bb5237077c06657084e5b23c98 Mon Sep 17 00:00:00 2001
+From: Felix Fietkau <nbd@nbd.name>
+Date: Sat, 21 Nov 2026 13:09:19 +0100
+Subject: [PATCH] wifi: mt76: mt7996: send the Beacon rate table again after a
+ full reset
+
+mt7996_get_rates_table() sends the Beacon fixed-rate table entry only
+when the rate differs from phy->beacon_rate. A full reset reloads the
+firmware, which then holds its default entry. The reset keeps
+phy->beacon_rate, so the Beacon update of the restart sends no entry.
+Beacons then go out without the duplicate TX mode on all paths, at
+lower power, after every full reset.
+
+Forget the Beacon rate of each phy at a full reset, like omac_mask and
+rxfilter, so that the restart sends the entry again.
+
+Fixes: 254ab81f3b82 ("wifi: mt76: connac: add beacon duplicate TX mode support for mt7996")
+Link: https://patch.msgid.link/20261121120926.3603979-10-nbd@nbd.name
+Signed-off-by: Felix Fietkau <nbd@nbd.name>
+---
+ mt7996/mac.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/mt7996/mac.c b/mt7996/mac.c
+index 2bc95da62..10d15fd70 100644
+--- a/mt7996/mac.c
++++ b/mt7996/mac.c
+@@ -2546,6 +2546,7 @@ mt7996_mac_full_reset(struct mt7996_dev *dev)
+ 	mt7996_for_each_phy(dev, phy) {
+ 		phy->omac_mask = 0;
+ 		phy->rxfilter |= MT_WF_RFCR_DROP_OTHER_UC;
++		phy->beacon_rate = -1;
+ 	}
+ 	dev->mld_idx_mask = 0;
+ 	dev->mld_remap_idx_mask = 0;
