@@ -106,6 +106,24 @@ CONFIG_GOLANG_EXTERNAL_BOOTSTRAP_ROOT="/opt/go-bootstrap"   # 官方 go1.24.13 l
      L1 路径虽然会 stop/reinit NPU，但不能保证无线→PPE 通路完全复原。
      遇到 dmesg 里出现 `L1 SER recovery completed` 且速率异常，直接重启最稳。
 
+### 2026-11-25 第二次验证（mt76 L1 修复 + pbodq2 标签）
+
+- 镜像：`immortalwrt-pbodq2-xr1710g-snapshot-20261124-222638-…itb`，92,824,440 B，
+  sha256 `2fd1fc9713c2b58c57615f27dc165ef277833010fdef860ab143f95145a279a1`
+- 运行时版本串：
+  `ImmortalWrt pbodq2 XR1710G SNAPSHOT r0+22-6a3cf22158 20261124 222523 pbodq2 6a3cf221`
+  （`CONFIG_VERSION_DIST` 已改为 pbodq2，镜像名也带构建时间戳）
+- 刷入后 MLO 客户端 iperf3 → NAS 回到 ~1.7 Gbps；测试后
+  `ppe/entries=95`、`ppe/bind=12`、`conntrack` OFFLOAD=21，offload 正常绑定
+- mt76 定向回填（保持 `0936617d` 不变）：
+  - `9996` restore the operating channel after an L1 SER（8f340d06）
+  - `9997` send the Beacon rate table again after a full reset（a0007bb6）
+  - 另有 `9994` set skb device for NPU RX、`129` L1 后 NPU 重试
+  - 构建目录源码确认 `mt7996_mac_reset_channel_restore` / `fw_offchannel`
+- 开机时序：`ap-mld0` 约开机 2 分钟后才注册，`fw4-flowtable` 必须先等 `ap-mld*`
+  再比较/重载（提交 `5e4398efc9`）。当前镜像烧的是旧脚本，新脚本在 overlay，
+  下一次构建会进镜像。
+
 ## 6. 已知差异
 
 - 本地 arm64 构建，Go 引导用预编译、无 `libcronet`（sing-box 无 naive 出站）
