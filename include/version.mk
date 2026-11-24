@@ -63,6 +63,19 @@ VERSION_PRODUCT:=$(if $(VERSION_PRODUCT),$(VERSION_PRODUCT),Generic)
 VERSION_HWREV:=$(call qstrip,$(CONFIG_VERSION_HWREV))
 VERSION_HWREV:=$(if $(VERSION_HWREV),$(VERSION_HWREV),v0)
 
+# Build stamp appended to DISTRIB_DESCRIPTION: build date/time (ymd his) and
+# the branch the image was built from. CONFIG_VERSION_DIST is a fixed brand
+# label ("ImmortalWrt naoki66 XR1710G") shared by every branch, so without
+# this the release string cannot tell naoki66-base and pbodq2-base apart.
+VERSION_BUILD_DATE:=$(shell date '+%Y%m%d %H%M%S')
+VERSION_BUILD_BRANCH:=$(strip $(or $(BUILD_BRANCH),$(GITHUB_REF_NAME),$(shell git -C $(TOPDIR) rev-parse --abbrev-ref HEAD 2>/dev/null)))
+VERSION_BUILD_BRANCH:=$(if $(filter HEAD,$(VERSION_BUILD_BRANCH)),detached,$(VERSION_BUILD_BRANCH))
+VERSION_BUILD_BRANCH:=$(if $(VERSION_BUILD_BRANCH),$(VERSION_BUILD_BRANCH),unknown)
+VERSION_BUILD_BRANCH:=$(patsubst %-base,%,$(VERSION_BUILD_BRANCH))
+VERSION_BUILD_COMMIT:=$(shell git -C $(TOPDIR) rev-parse --short=8 HEAD 2>/dev/null)
+VERSION_BUILD_COMMIT:=$(if $(VERSION_BUILD_COMMIT),$(VERSION_BUILD_COMMIT),unknown)
+VERSION_BUILD_INFO:=$(strip $(VERSION_BUILD_DATE) $(VERSION_BUILD_BRANCH) $(VERSION_BUILD_COMMIT))
+
 define taint2sym
 $(CONFIG_$(firstword $(subst :, ,$(subst +,,$(subst -,,$(1))))))
 endef
@@ -113,4 +126,5 @@ VERSION_SED_SCRIPT:=$(SED) 's,%U,$(call sed_escape,$(VERSION_REPO)),g' \
 	-e 's,%f,$(call sed_escape,$(VERSION_FIRMWARE_URL)),g' \
 	-e 's,%P,$(call sed_escape,$(VERSION_PRODUCT)),g' \
 	-e 's,%h,$(call sed_escape,$(VERSION_HWREV)),g' \
+	-e 's,%j,$(call sed_escape,$(VERSION_BUILD_INFO)),g' \
 	-e 's,%B,$(call sed_escape,$(SOURCE_DATE_EPOCH)),g'
