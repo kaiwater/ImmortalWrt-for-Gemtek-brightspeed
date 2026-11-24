@@ -166,6 +166,27 @@ Helper environment facts:
   (`write through` with the QNAP option off);
 - the LUN is `303 GiB` with ~260 GiB free after the pbodq2 tree.
 
+Host tools are architecture specific. A tree copied from an x86_64 build host
+carries an x86_64 `staging_dir/hostpkg/bin/node`, which cannot run in the arm64
+VM; every npm-based package then dies with
+
+```text
+/.../staging_dir/hostpkg/bin/node: 1: Syntax error: ")" unexpected
+cp: cannot stat '.../smartdns-webui/out': No such file or directory
+```
+
+`CONFIG_NODEJS_HOST_BIN=y` (enabled in the XR1710G seeds) always fetches
+`node-v<ver>-linux-x64.tar.gz`. `patches/feeds/packages/lang/node/` makes the
+tarball follow the build host instead (`linux-arm64` on `aarch64`). Once the
+feed patch is in place, rebuild the host package:
+
+```sh
+limactl shell qnap-test bash -c 'cd /build/pbodq2 &&
+  rm -f staging_dir/hostpkg/bin/node* &&
+  rm -rf build_dir/hostpkg/node-v* &&
+  make package/feeds/packages/node/host/compile'
+```
+
 ## 9. Backup
 
 Container filesystem export taken before moving the workspace:
