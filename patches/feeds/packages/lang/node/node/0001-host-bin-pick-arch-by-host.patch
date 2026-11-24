@@ -1,0 +1,48 @@
+diff --git a/lang/node/node/Makefile b/lang/node/node/Makefile
+index 3a67822..19ee486 100644
+--- a/lang/node/node/Makefile
++++ b/lang/node/node/Makefile
+@@ -12,6 +12,7 @@ PKG_RELEASE:=1
+ PKG_HASH:=4dd79de8cdc85d65cb32f48a75aee1067bf00bf94b96ecc8e4c2f82f6f0272c2
+ PATCH_DIR:=./patches/v22.x
+ NODEJS_BIN_SUM:=b8492284c76a54baf58d61668dd0e41ee0fc98adabf9503d30f05d08f55b4406
++NODEJS_BIN_SUM_ARM64:=f7a1e486dbc8b286847815b477d4fb5e9fb963ed4489c3e1588853d685f589f9
+ NODE_MODULE_VERSION:=127
+ else
+ ifeq ($(CONFIG_NODEJS_26),y)
+@@ -20,6 +21,7 @@ PKG_RELEASE:=1
+ PKG_HASH:=986ead18ef18256831bae3e57d94aef680a7b84cfd4044f3e8471f833fbd7191
+ PATCH_DIR:=./patches/v26.x
+ NODEJS_BIN_SUM:=5848553868b402d3fabb5b09270649977780a390f832155721025a08b5104455
++NODEJS_BIN_SUM_ARM64:=439e9c438acdf6a6ffe47418da709153d66c4bed812e30a473faacb107dd2791
+ NODE_MODULE_VERSION:=147
+ else
+ PKG_VERSION:=24.22.2
+@@ -27,6 +29,7 @@ PKG_RELEASE:=1
+ PKG_HASH:=b2f5443a34a38d863e87c0f5f80c03630fc16917dfe16f26c1cec44c0b542959
+ PATCH_DIR:=./patches/v24.x
+ NODEJS_BIN_SUM:=361718c444e49af2ca5a110c83ba6a8901143f23ab285ebbef0341f391f482a9
++NODEJS_BIN_SUM_ARM64:=95c264150aceb7f3437a29fd6984924f5f8d1511ea3cbd6c508b83f6c555dae2
+ NODE_MODULE_VERSION:=137
+ endif
+ endif
+@@ -231,12 +234,17 @@ endef
+ 
+ ifeq ($(CONFIG_NODEJS_HOST_BIN),y)
+ 
+-NODEJS_BIN:=node-v$(PKG_VERSION)-linux-x64.tar.gz
++# The prebuilt tarball has to match the build host, not the target: an aarch64
++# build host (native arm64 Linux or a Lima VM on Apple Silicon) needs the
++# linux-arm64 build, everything else keeps the linux-x64 one.
++NODEJS_BIN_HOST_ARCH:=$(if $(findstring aarch64,$(shell uname -m)),arm64,x64)
++NODEJS_BIN:=node-v$(PKG_VERSION)-linux-$(NODEJS_BIN_HOST_ARCH).tar.gz
++NODEJS_BIN_SUM_HOST:=$(if $(findstring arm64,$(NODEJS_BIN_HOST_ARCH)),$(NODEJS_BIN_SUM_ARM64),$(NODEJS_BIN_SUM))
+ 
+ define Download/nodebin
+ 	URL:=https://nodejs.org/download/release/v$(PKG_VERSION)/
+ 	FILE:=$(NODEJS_BIN)
+-	HASH:=$(NODEJS_BIN_SUM)
++	HASH:=$(NODEJS_BIN_SUM_HOST)
+ endef
+ 
+ define Host/Prepare
