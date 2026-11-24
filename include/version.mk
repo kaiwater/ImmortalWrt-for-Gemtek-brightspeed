@@ -68,6 +68,7 @@ VERSION_HWREV:=$(if $(VERSION_HWREV),$(VERSION_HWREV),v0)
 # label ("ImmortalWrt naoki66 XR1710G") shared by every branch, so without
 # this the release string cannot tell naoki66-base and pbodq2-base apart.
 VERSION_BUILD_DATE:=$(shell date '+%Y%m%d %H%M%S')
+VERSION_BUILD_STAMP:=$(subst $(space),-,$(VERSION_BUILD_DATE))
 VERSION_BUILD_BRANCH:=$(strip $(or $(BUILD_BRANCH),$(GITHUB_REF_NAME),$(shell git -C $(TOPDIR) rev-parse --abbrev-ref HEAD 2>/dev/null)))
 VERSION_BUILD_BRANCH:=$(if $(filter HEAD,$(VERSION_BUILD_BRANCH)),detached,$(VERSION_BUILD_BRANCH))
 VERSION_BUILD_BRANCH:=$(if $(VERSION_BUILD_BRANCH),$(VERSION_BUILD_BRANCH),unknown)
