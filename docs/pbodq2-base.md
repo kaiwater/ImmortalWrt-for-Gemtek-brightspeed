@@ -44,9 +44,14 @@ rm -rf package/feeds/*/open-app-filter        # 与 package/oaf 同名包冲突
 sh scripts/fix-arm64-host-node.sh             # 仅 arm64 宿主需要
 cp 1710-ubi.config .config
 cat custom/config.fragment >> .config
+mkdir -p files && cp -a custom/files/. files/  # 自定义 overlay（CI 也在做）
 # 本地 arm64：Go 引导与 naive 关闭（见 §4）
 make defconfig && make -j$(nproc) world
 ```
+
+> 漏掉 `cp -a custom/files/. files/` 时，`/etc/uci-defaults`、apk 源脚本和自定义
+> LuCI 页面都不会进镜像——2026-11-24 的本地重建就漏了这一步，和 20261108 那版
+> 对比时会看到文件差异。
 
 本地 arm64 还需要：
 
@@ -69,6 +74,14 @@ CONFIG_GOLANG_EXTERNAL_BOOTSTRAP_ROOT="/opt/go-bootstrap"   # 官方 go1.24.13 l
    smartdns-ui 的 webui 编不出来。`scripts/fix-arm64-host-node.sh` 换成官方 arm64 Node 22。
 4. **open-app-filter 重名**：immortalwrt/packages 里有旧的 `open-app-filter`
    （appfilter 6.x），与 `package/oaf` 同名，必须删 `package/feeds/*/open-app-filter`。
+5. **MLO 接口漏出 flowtable（PPE 不生效）**：`ap-mld0` 注册晚于 fw4 首次装载；
+   nft 在 netdev 注销时会把它从 flowtable 摘掉，重新注册后不会自动加回。结果是
+   MLO 客户端的流量永远不硬件 offload：`/sys/kernel/debug/ppe/{bind,entries}`
+   一直是空，BND/UNB 显示 0，转发全走 CPU，实测吞吐明显偏低。
+   `custom/files/etc/init.d/fw4-flowtable`（START=99）在无线接口稳定后检查一次，
+   缺设备才 `fw4 reload`；运行中临时修复也是 `fw4 reload`。
+   另：`ppe/bind_rate` 开机读到 0（补丁默认 8），可
+   `echo 8 > /sys/kernel/debug/ppe/bind_rate` 现场恢复。
 
 ## 5. 验证记录（2026-11-15）
 

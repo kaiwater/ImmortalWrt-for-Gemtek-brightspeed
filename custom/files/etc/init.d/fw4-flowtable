@@ -1,0 +1,39 @@
+#!/bin/sh /etc/rc.common
+# nftables drops a device from a flowtable when its netdev is unregistered
+# and does not add it back when the netdev returns.  On this board the MLO
+# interface (ap-mld0) registers after fw4's first load, so the running
+# flowtable keeps only the legacy AP interfaces and MLO traffic is never
+# hardware-offloaded (PPE stays empty and everything is forwarded by the CPU).
+#
+# Re-run fw4 once the wireless interfaces have settled, but only when the
+# generated ruleset has a wireless device that the running flowtable lacks.
+START=99
+STOP=10
+
+boot() {
+	(
+		i=0
+		while [ $i -lt 60 ] && ! ls /sys/class/net/ap-* >/dev/null 2>&1; do
+			sleep 2
+			i=$((i + 1))
+		done
+		# give netifd time to put the AP interfaces into their bridges
+		sleep 8
+
+		running=$(nft list ruleset 2>/dev/null | sed -n '/flowtable ft {/,/}/p')
+		generated=$(fw4 print 2>/dev/null | sed -n '/flowtable ft {/,/}/p')
+		missing=""
+
+		for dev in /sys/class/net/ap-* /sys/class/net/phy*.ap*; do
+			[ -e "$dev" ] || continue
+			name=${dev##*/}
+			echo "$generated" | grep -q "\"$name\"" || continue
+			echo "$running" | grep -q "\"$name\"" || missing="$missing $name"
+		done
+
+		if [ -n "$missing" ]; then
+			logger -t fw4-flowtable "wifi netdev missing from flowtable:$missing, reloading firewall"
+			fw4 reload
+		fi
+	) &
+}
