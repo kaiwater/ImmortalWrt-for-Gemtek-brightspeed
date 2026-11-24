@@ -111,3 +111,30 @@ CONFIG_GOLANG_EXTERNAL_BOOTSTRAP_ROOT="/opt/go-bootstrap"   # 官方 go1.24.13 l
 - 本地 arm64 构建，Go 引导用预编译、无 `libcronet`（sing-box 无 naive 出站）
 - CI 工作流尚未适配（`.github/workflows` 仍是 pbodq2 原生；GitHub Actions 对仓库
   处于禁用状态）
+
+## 7. 升级基线（换 PBODQ2_BASE）
+
+触发条件：新 tag（或 fanboy `ubi2` 头）的内核 **≥ 6.18.65**，该版本开始带
+mt76 的 L1 SER 复位修复（wake MCU waiters / restore operating channel /
+beacon rate table，见 §5 2026-11-25）。
+
+1. 把新 tag 名和完整 commit 写进 `PBODQ2_BASE`。
+2. 以新 tag 为基重建 `pbodq2-base`（overlay 提交 rebase 或 cherry-pick）。
+3. 重新验证本地补丁：
+   - `package/kernel/mt76/patches/` 全部按文件名顺序 dry-run（含
+     `NoTengoBattery-…`、`hurryman-999x`、`9994`、`9995`、`129`）；
+   - `target/linux/airoha/patches-6.18/`（746 PON 等）、DTS、设备块、
+     `image/an7581.mk`。
+4. 构建（注意不能漏 `files/`）：
+   ```sh
+   ./scripts/feeds update -a && ./scripts/feeds install -a
+   rm -rf package/feeds/*/open-app-filter
+   cp 1710-ubi.config .config && cat custom/config.fragment >> .config
+   mkdir -p files && cp -a custom/files/. files/
+   make defconfig && make -j$(nproc) world
+   ```
+5. 刷机前按约定备份 iCloud（当前固件 + `sysupgrade -b` 配置），再
+   `sysupgrade -F` 刷入。
+6. 验证：board/kernel/mt76/OAF、MLO iperf3 → NAS 吞吐、测试期间
+   `ppe/entries` 非零、passwall/LB、CA 黑名单、`dmesg` 无 SER/复位异常。
+7. 连续两个 tag 验证通过后，才考虑把发布线切到 pbodq2。
