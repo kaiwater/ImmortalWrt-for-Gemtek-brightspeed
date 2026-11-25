@@ -12,15 +12,16 @@ STOP=10
 
 boot() {
 	(
-		# ap-mld* appears ~2 min after boot; the legacy AP interfaces and
-		# their bridge membership follow around the same time
+		# ap-mld* appears ~2 min after boot, and the bridge enslaves it a
+		# little later still; only then does fw4 list it in the flowtable
 		i=0
-		while [ $i -lt 90 ]; do
-			ls /sys/class/net/ap-mld* >/dev/null 2>&1 && break
+		while [ $i -lt 120 ]; do
+			ls /sys/class/net/ap-mld* >/dev/null 2>&1 || { sleep 2; i=$((i + 1)); continue; }
+			[ -e /sys/class/net/ap-mld0/brport ] && break
 			sleep 2
 			i=$((i + 1))
 		done
-		sleep 5
+		sleep 3
 
 		missing=""
 		for n in 1 2 3 4 5; do
