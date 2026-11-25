@@ -1,53 +1,16 @@
 #!/bin/sh /etc/rc.common
-# nftables drops a device from a flowtable when its netdev is unregistered
-# and does not add it back when the netdev returns.  On this board the MLO
-# interface (ap-mld0) registers about two minutes after fw4's first load, so
-# the running flowtable keeps only the legacy AP interfaces and MLO traffic is
-# never hardware-offloaded (PPE stays empty, everything goes through the CPU).
-#
-# Wait for the MLO interface, then re-run fw4 once if the generated ruleset
-# has a wireless device the running flowtable lacks.
+# Keep the MLO interface in the hardware-offload flowtable: nft silently drops
+# a netdev from a flowtable when it unregisters and never adds it back, and
+# ap-mld0 shows up long after fw4's first load.  The actual polling lives in
+# /usr/sbin/fw4-mlo-offload, run as a procd service so it survives the init
+# script exit.
 START=99
 STOP=10
+USE_PROCD=1
 
-boot() {
-	(
-		# ap-mld* appears ~2 min after boot, and the bridge enslaves it a
-		# little later still; only then does fw4 list it in the flowtable
-		i=0
-		while [ $i -lt 120 ]; do
-			ls /sys/class/net/ap-mld* >/dev/null 2>&1 || { sleep 2; i=$((i + 1)); continue; }
-			[ -e /sys/class/net/ap-mld0/brport ] && break
-			sleep 2
-			i=$((i + 1))
-		done
-		sleep 3
-
-		missing=""
-		for n in 1 2 3 4 5; do
-			running=$(nft list ruleset 2>/dev/null | sed -n '/flowtable ft {/,/}/p')
-			generated=$(fw4 print 2>/dev/null | sed -n '/flowtable ft {/,/}/p')
-			missing=""
-			for dev in /sys/class/net/ap-* /sys/class/net/phy*.ap*; do
-				[ -e "$dev" ] || continue
-				name=${dev##*/}
-				echo "$generated" | grep -q "\"$name\"" || continue
-				echo "$running" | grep -q "\"$name\"" || missing="$missing $name"
-			done
-			[ -n "$missing" ] && break
-			sleep 3
-		done
-
-		if [ -n "$missing" ]; then
-			logger -t fw4-flowtable "wifi netdev missing from flowtable:$missing, reloading firewall"
-			fw4 reload
-		fi
-
-		# The driver patch defaults the PPE bind rate to 8, but the register
-		# reads back 0 after boot.  Restore the compiled-in default so flows
-		# bind after the documented number of packets.
-		if [ -w /sys/kernel/debug/ppe/bind_rate ]; then
-			echo 8 > /sys/kernel/debug/ppe/bind_rate
-		fi
-	) &
+start_service() {
+	procd_open_instance
+	procd_set_param command /usr/sbin/fw4-mlo-offload
+	procd_set_param respawn 3600 5 0
+	procd_close_instance
 }

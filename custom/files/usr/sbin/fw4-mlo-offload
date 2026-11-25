@@ -1,0 +1,30 @@
+#!/bin/sh
+# nftables drops a device from a flowtable when its netdev is unregistered and
+# does not add it back.  On this board ap-mld0 (MLO) appears ~2 min after boot
+# and is bridged a little later, so the flowtable loaded by fw4 at boot only
+# has the legacy AP interfaces and MLO traffic never reaches the PPE.
+#
+# Poll for up to 10 minutes: once the MLO interface is bridged, reload fw4 and
+# confirm that the running flowtable picked it up.  Runs as a procd service so
+# the polling loop survives the init script's exit.
+
+# the driver default is 8 but the register reads back 0 after boot
+[ -w /sys/kernel/debug/ppe/bind_rate ] && echo 8 > /sys/kernel/debug/ppe/bind_rate
+
+has_mld() {
+	nft list ruleset 2>/dev/null |
+		sed -n '/flowtable ft {/,/}/p' | grep -q '"ap-mld0"'
+}
+
+i=0
+while [ $i -lt 60 ]; do
+	if [ -e /sys/class/net/ap-mld0/brport ]; then
+		has_mld && break
+		logger -t fw4-mlo-offload "ap-mld0 missing from flowtable, reloading firewall"
+		fw4 reload >/dev/null 2>&1
+		sleep 3
+		has_mld && break
+	fi
+	sleep 10
+	i=$((i + 1))
+done
